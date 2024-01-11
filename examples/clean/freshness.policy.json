@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1",
+  "limits": { "maxSnapshotAgeMinutes": 120, "maxLineageDepth": 8 },
+  "calendar": {
+    "offsetMinutes": 0,
+    "businessDays": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    "maintenanceWindows": [
+      { "id": "weekly-vacuum", "start": "2026-09-19T01:00:00Z", "end": "2026-09-19T03:00:00Z" }
+    ]
+  },
+  "tables": [
+    { "name": "raw.orders", "maxAgeMinutes": 60 },
+    { "name": "stage.orders_clean", "maxAgeMinutes": 90 },
+    { "name": "mart.orders_daily", "maxAgeMinutes": 120, "suspendOnNonBusinessDays": true },
+    { "name": "mart.inventory_daily", "maxAgeMinutes": 180, "suspendDuringMaintenance": true }
+  ]
+}

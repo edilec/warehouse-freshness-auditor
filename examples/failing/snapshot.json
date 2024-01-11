@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "generatedAt": "2026-09-18T09:00:00Z",
+  "tables": [
+    { "name": "raw.orders", "lastRefreshAt": "2026-09-18T02:10:00Z", "upstream": [] },
+    { "name": "stage.orders_clean", "lastRefreshAt": "2026-09-18T02:30:00Z", "upstream": ["raw.orders"] },
+    { "name": "mart.orders_daily", "lastRefreshAt": "2026-09-18T02:50:00Z", "upstream": ["stage.orders_clean"] },
+    { "name": "mart.inventory_daily", "lastRefreshAt": "2026-09-18T08:45:00Z", "upstream": ["raw.orders"] }
+  ],
+  "runs": []
+}
