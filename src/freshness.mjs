@@ -131,8 +131,7 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
     let cursor = start
     let outcome = 'local'
 
-    for (let edges = 0; edges <= limits.maxLineageDepth; edges += 1) {
-      if (edges === limits.maxLineageDepth) return { chain, unknowns, outcome: 'depth' }
+    for (let edges = 0; ; edges += 1) {
       const entry = snapshot.tables.get(cursor)
       const parents = entry === undefined ? [] : [...entry.upstream].sort(byCodeUnit)
       const late = []
@@ -145,6 +144,11 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
         outcome = chain.length > 1 ? 'upstream' : 'local'
         break
       }
+      // The bound is checked only once there is another edge to take, so a
+      // chain of exactly maxLineageDepth edges is walked to its end and only a
+      // longer one is refused. Checking it before looking for a parent refuses
+      // the chain that sits exactly on the documented limit.
+      if (edges === limits.maxLineageDepth) return { chain, unknowns, outcome: 'depth' }
       const next = late[0]
       if (onPath.has(next)) {
         chain.push(next)
