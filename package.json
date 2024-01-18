@@ -1,17 +1,53 @@
 {
   "name": "warehouse-freshness-auditor",
-  "version": "0.0.0",
-  "description": "Find stale warehouse tables and trace freshness back to the last run.",
+  "version": "0.1.0",
+  "description": "Compare exported table refresh timestamps against per-table SLAs using an injected clock, propagate the cause of a late table through its lineage, and report absent refresh history as unknown rather than fresh.",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test"
+    "lint": "node --check src/freshness.mjs && node --check src/index.mjs && node --check src/policy.mjs && node --check src/rules.mjs && node --check src/snapshot.mjs && node --check src/time.mjs && node --check bin/warehouse-freshness-auditor.mjs && node --check test/acceptance.test.mjs && node --check test/boundaries.test.mjs && node --check test/catalog.test.mjs && node --check test/cli.test.mjs && node --check test/emitted-severity.test.mjs && node --check test/evidence.test.mjs && node --check test/guards.test.mjs && node --check test/helpers.mjs && node --check test/ordering.test.mjs && node --check test/parse.test.mjs && node --check test/policy.test.mjs && node --check test/sanitise.test.mjs && node --check test/severity.test.mjs && node --check test/time.test.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**",
+    "example": "node bin/warehouse-freshness-auditor.mjs --policy examples/clean/freshness.policy.json --snapshot examples/clean/snapshot.json --now 2026-09-18T09:00:00Z",
+    "example:failing": "node bin/warehouse-freshness-auditor.mjs --policy examples/failing/freshness.policy.json --snapshot examples/failing/snapshot.json --now 2026-09-18T09:00:00Z > /dev/null 2>&1; test $? -eq 1",
+    "example:unknown": "node bin/warehouse-freshness-auditor.mjs --policy examples/unknown/freshness.policy.json --snapshot examples/unknown/snapshot.json --now 2026-09-18T09:00:00Z > /dev/null 2>&1; test $? -eq 2",
+    "pack:check": "npm pack --dry-run",
+    "check": "npm run lint && npm test && npm run example && npm run example:failing && npm run example:unknown && npm run pack:check"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/edilec/warehouse-freshness-auditor"
-  }
+    "url": "git+https://github.com/edilec/warehouse-freshness-auditor.git"
+  },
+  "bin": {
+    "warehouse-freshness-auditor": "./bin/warehouse-freshness-auditor.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "examples",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "data-freshness",
+    "sla",
+    "lineage",
+    "warehouse",
+    "observability",
+    "audit",
+    "cli"
+  ],
+  "author": "Edilec Private Limited",
+  "bugs": {
+    "url": "https://github.com/edilec/warehouse-freshness-auditor/issues"
+  },
+  "homepage": "https://github.com/edilec/warehouse-freshness-auditor#readme"
 }
