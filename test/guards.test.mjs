@@ -190,7 +190,7 @@ test('a calendar, window list or window entry of the wrong shape is refused', ()
   )
 })
 
-test('a table entry of the wrong shape is refused', () => {
+test('a policy table entry that is not an object is refused', () => {
   assert.throws(() => validatePolicy(document({ tables: ['a.table'] })), /"tables\[0\]" must be an object\./u)
 })
 

@@ -190,22 +190,20 @@ test('a snapshot table the policy does not govern is simply not governed', async
 })
 
 test('a lineage cycle leaves the far end of the chain unnamed', async () => {
-  const report = await auditSnapshot(await (async () => {
-    const { policyPath, snapshotPath } = await project(
-      policy({
-        limits: { maxSnapshotAgeMinutes: 1440 },
-        tables: [{ name: 'a.table', maxAgeMinutes: 60 }, { name: 'b.table', maxAgeMinutes: 60 }],
-      }),
-      snapshot({
-        generatedAt: '2026-09-18T09:00:00Z',
-        tables: [
-          { name: 'a.table', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['b.table'] },
-          { name: 'b.table', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['a.table'] },
-        ],
-      }),
-    )
-    return { policy: policyPath, snapshot: snapshotPath, now: ms(NOW) }
-  })())
+  const { policyPath, snapshotPath } = await project(
+    policy({
+      limits: { maxSnapshotAgeMinutes: 1440 },
+      tables: [{ name: 'a.table', maxAgeMinutes: 60 }, { name: 'b.table', maxAgeMinutes: 60 }],
+    }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: [
+        { name: 'a.table', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['b.table'] },
+        { name: 'b.table', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['a.table'] },
+      ],
+    }),
+  )
+  const report = await auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now: ms(NOW) })
 
   assert.equal(report.status, 'incomplete')
   assert.equal(ruleIds(report).includes('lineage-cycle'), true)

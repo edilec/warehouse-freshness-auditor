@@ -86,7 +86,7 @@ test('minutes between two instants round down and never invent a second', () => 
   assert.equal(minutesBetween(base + MINUTE_MS, base), -1)
 })
 
-test('a window is half open at both the value and the type level', () => {
+test('a window includes the instant it starts on and excludes the one it ends on', () => {
   const window = { startMs: 100, endMs: 200 }
   assert.equal(withinWindow(99, window), false)
   assert.equal(withinWindow(100, window), true)

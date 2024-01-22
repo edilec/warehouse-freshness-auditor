@@ -200,6 +200,12 @@ Findings sort by `(location.file, location.pointer, ruleId, message)`, each
 compared by UTF-16 code unit. `localeCompare` and `Intl.Collator` are not used:
 their collation depends on ICU data that varies between Node builds.
 
+`location.file` is the snapshot document's base name, never an absolute host
+path, and it is the same in every finding of one report because one report
+describes one snapshot. `location.pointer` is a JSON Pointer into that document:
+`/generatedAt`, `/tables/<index>`, `/tables/<index>/lastRefreshAt`,
+`/runs/<index>` or `/runs/<index>/endedAt`.
+
 ## Suspension, and what a suspended run reports
 
 A table is suspended only when it opts in, and only for the instant given:
