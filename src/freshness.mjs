@@ -70,11 +70,9 @@ export function refreshOf(name, snapshot) {
   const entry = snapshot.tables.get(name)
   if (entry === undefined) return { kind: 'absent-table' }
 
-  let latestRun = null
-  for (const run of snapshot.runs) {
-    if (run.table !== name || run.state !== 'complete') continue
-    if (latestRun === null || run.endedMs > latestRun.endedMs) latestRun = run
-  }
+  // `latestCompleteRun` is built once by `readSnapshot`. Scanning the run list
+  // here instead is what made a legal-sized audit take twenty-two seconds.
+  const latestRun = snapshot.latestCompleteRun.get(name) ?? null
 
   if (entry.lastRefreshMs === null) {
     if (latestRun === null) return { kind: 'absent', entry }
@@ -105,8 +103,23 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
   const governed = new Map(policy.tables.map((table) => [table.name, table]))
   const reportedUpstream = new Set()
 
-  /** Late, fresh, or not decidable -- used only for attributing a cause. */
+  /**
+   * Late, fresh, or not decidable -- used only for attributing a cause.
+   *
+   * Memoised, because the lineage walk asks about the same upstream table once
+   * per late descendant and the answer cannot change within a run: `nowMs` and
+   * the snapshot are both fixed for its whole duration.
+   */
+  const verdicts = new Map()
   const classify = (name) => {
+    const cached = verdicts.get(name)
+    if (cached !== undefined) return cached
+    const computed = classifyUncached(name)
+    verdicts.set(name, computed)
+    return computed
+  }
+
+  const classifyUncached = (name) => {
     const table = governed.get(name)
     if (table === undefined) return { kind: 'unknown', why: 'the policy declares no maxAgeMinutes for it' }
     const refresh = refreshOf(name, snapshot)
@@ -261,12 +274,21 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
         { suggestion: 'Recover the upstream at the far end of the chain first.' },
       )
     } else {
+      // The message is the same either way, because the lateness is the same
+      // fact either way. The SUGGESTION is not: pointing at this table's own
+      // job is sound only when the walk finished and found no late upstream.
+      // When it was cut short by a cycle or by the depth bound, that advice
+      // would be this tool attributing a cause it did not establish.
       emit(
         'table-late',
         msg`${table.name} is ${String(age)} minutes old, above its ${String(table.maxAgeMinutes)}
             minute limit.`,
         at(file, pointer),
-        { suggestion: 'Check the job that refreshes this table.' },
+        {
+          suggestion: traced.outcome === 'local'
+            ? 'Check the job that refreshes this table.'
+            : 'Read the finding beside this one: the far end of its lineage was not reached.',
+        },
       )
     }
 

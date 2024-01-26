@@ -264,5 +264,20 @@ export async function readSnapshot(path, limits) {
     }
   }
 
-  return { ok: true, file, generatedAtMs: generated.ms, tables, runs }
+  // The latest completed run per table, indexed once.
+  //
+  // This is a BOUND, not a convenience. Without it every freshness question
+  // rescans every run record, and the lineage walk asks that question once per
+  // upstream edge per governed table: at the documented limits that is tables
+  // times depth times runs, which took twenty-two seconds on an input this
+  // tool's own documentation calls legal. One pass here makes every later
+  // lookup constant.
+  const latestCompleteRun = new Map()
+  for (const run of runs) {
+    if (run.state !== 'complete') continue
+    const best = latestCompleteRun.get(run.table)
+    if (best === undefined || run.endedMs > best.endedMs) latestCompleteRun.set(run.table, run)
+  }
+
+  return { ok: true, file, generatedAtMs: generated.ms, tables, runs, latestCompleteRun }
 }
