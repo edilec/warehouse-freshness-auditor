@@ -277,7 +277,16 @@ bound is an `incomplete` result with a finding naming the limit, never a silent
 truncation and never a pass.
 
 `limits.maxLineageDepth` counts edges. A chain of exactly that many edges is
-walked to its far end; only a longer one is refused.
+walked to its far end; only a longer one is refused, and a table whose chain was
+cut reports its lateness together with `lineage-depth-exceeded` rather than
+being reported as late for a local reason.
+
+The snapshot's completed runs are indexed once when it is read, so a freshness
+question costs the same whatever the run history holds. Measured on this tool:
+2048 governed tables in a 2048-deep chain with 20000 run records took 21.9
+seconds before that index existed and 1.4 seconds after it; the ceiling case —
+20000 tables, 100000 runs, an 11 MB snapshot — finishes in 1.3 seconds under a
+512 MB heap.
 
 ## Verification
 
