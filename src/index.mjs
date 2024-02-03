@@ -86,7 +86,6 @@ export {
   msg,
   num,
   parseFailureDetail,
-  pointerToken,
   sanitize,
   severityFor,
   sortFindings,

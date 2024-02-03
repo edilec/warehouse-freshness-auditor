@@ -359,19 +359,6 @@ export function at(file, pointer) {
   return location
 }
 
-/**
- * JSON Pointer escaping, applied to an already sanitised token.
- *
- * RFC 6901 section 3: inside a reference token `~` is written `~0` and `/` is
- * written `~1`, and the order matters -- `~` first, then `/`. Escaping `/`
- * first would turn a literal `~1` in the name into a second-class `/` when a
- * consumer decodes it, because decoding is specified to replace `~1` before
- * `~0`.
- */
-export function pointerToken(value) {
-  return sanitize(value, MAX_ID_LENGTH).replace(/~/gu, '~0').replace(/\//gu, '~1')
-}
-
 export function makeFinding(ruleId, message, location, extra = {}) {
   if (!(message instanceof SafeMessage)) {
     throw new Error(`Finding "${ruleId}" must build its message with the msg tagged template`)
