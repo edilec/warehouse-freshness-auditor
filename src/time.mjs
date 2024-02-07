@@ -29,6 +29,14 @@ function daysInMonth(year, month) {
   return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
 }
 
+/**
+ * Parse one of the two accepted shapes.
+ *
+ * A sweep reports swapping these two alternatives as SURVIVING, and that is an
+ * EQUIVALENT MUTANT for a reason a reader can check: both patterns are anchored
+ * at both ends, and the date-only shape has no `T`, so no string can match
+ * both. Whichever is tried first, at most one can succeed.
+ */
 export function parseInstant(text) {
   if (typeof text !== 'string') return { ok: false }
   const match = DATE_TIME.exec(text) ?? DATE_ONLY.exec(text)

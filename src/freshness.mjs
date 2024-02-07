@@ -109,6 +109,12 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
    * Memoised, because the lineage walk asks about the same upstream table once
    * per late descendant and the answer cannot change within a run: `nowMs` and
    * the snapshot are both fixed for its whole duration.
+   *
+   * A sweep reports dropping the memo as SURVIVING. That is an EQUIVALENT
+   * MUTANT by construction rather than by luck -- `classifyUncached` reads only
+   * those two fixed values, so repeating it returns the same answer and the
+   * report is byte-identical. What it costs is time, which is what the memo is
+   * here for.
    */
   const verdicts = new Map()
   const classify = (name) => {
