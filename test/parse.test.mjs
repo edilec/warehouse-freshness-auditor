@@ -44,8 +44,8 @@ test('a document that is only a credential is never reproduced', () => {
 })
 
 test('a long document with a sensitive prefix loses the prefix, not just the tail', () => {
-  const { message, detail } = failureFor(`password=hunter2${'z'.repeat(200)}`)
-  assert.equal(message.includes('password=h'), true)
+  const { message, detail } = failureFor(`password=NOTAREAL${'z'.repeat(200)}`)
+  assert.equal(message.includes('password=N'), true)
   assert.equal(detail, "unexpected token 'p' at the start of the document")
   assert.equal(detail.includes('password'), false)
 })

@@ -299,7 +299,7 @@ function describeParseFailure(message) {
  * Say what a `JSON.parse` failure was, without reproducing the document.
  *
  * V8 reports a parse failure two ways and one of them quotes the input back:
- * `Unexpected token 'A', "AKIAIOSFODNN7EXAMPLE" is not valid JSON`. A document
+ * `Unexpected token 'N', "NOTAREALTOKEN0000EXAMPLE" is not valid JSON`. A document
  * short enough to be only a credential is therefore reproduced in full by its
  * own error message, and `sanitize` does not stop that -- it strips control
  * characters and cuts from the end, while the quoted input sits at the front.
