@@ -156,6 +156,63 @@ test('a completed run supplies the history that lastRefreshAt does not', async (
   assert.equal(report.summary.checked, 3)
 })
 
+test('lastRefreshAt equal to its completed run ends is the ordinary consistent export', async () => {
+  // This is what a correct exporter writes: the table's lastRefreshAt IS the
+  // instant its last completed run ended. `refreshOf` only calls the snapshot
+  // self-contradictory when a run ended STRICTLY LATER than the declared
+  // refresh, and the equal case had no test -- so widening that comparison by
+  // one character turned the most ordinary export into `refresh-history-conflict`
+  // and exit 2, with the whole suite green.
+  const report = await audit(CHAIN_POLICY, snapshot({
+    generatedAt: '2026-09-18T09:00:00Z',
+    tables: [
+      { name: 'raw.orders', lastRefreshAt: '2026-09-18T08:30:00Z' },
+      { name: 'stage.orders_clean', lastRefreshAt: '2026-09-18T08:40:00Z' },
+      { name: 'mart.orders_daily', lastRefreshAt: '2026-09-18T08:50:00Z' },
+    ],
+    runs: [
+      { table: 'raw.orders', runId: 'run-1', state: 'complete', endedAt: '2026-09-18T08:30:00Z' },
+      { table: 'stage.orders_clean', runId: 'run-2', state: 'complete', endedAt: '2026-09-18T08:40:00Z' },
+      { table: 'mart.orders_daily', runId: 'run-3', state: 'complete', endedAt: '2026-09-18T08:50:00Z' },
+    ],
+  }))
+  assert.deepEqual(report.findings, [])
+  assert.equal(report.status, 'pass')
+  assert.equal(report.summary.checked, 3)
+
+  // One millisecond later on one run is a real disagreement, and is reported.
+  const later = await audit(CHAIN_POLICY, snapshot({
+    generatedAt: '2026-09-18T09:00:00Z',
+    tables: [
+      { name: 'raw.orders', lastRefreshAt: '2026-09-18T08:30:00Z' },
+      { name: 'stage.orders_clean', lastRefreshAt: '2026-09-18T08:40:00Z' },
+      { name: 'mart.orders_daily', lastRefreshAt: '2026-09-18T08:50:00Z' },
+    ],
+    runs: [
+      { table: 'raw.orders', runId: 'run-1', state: 'complete', endedAt: '2026-09-18T08:30:00.001Z' },
+    ],
+  }))
+  assert.equal(later.status, 'incomplete')
+  assert.deepEqual(ruleIds(later), ['refresh-history-conflict'])
+})
+
+test('an age is stated from the instant the document wrote, including a year under 100', async () => {
+  // `Date.UTC` remaps years 0000-0099 into 1900-1999, so a zeroed or sentinel
+  // lastRefreshAt was read as 1926 and the report stated a specific
+  // 52,596,030-minute age as a fact about an instant no document contains.
+  const report = await audit(
+    policy({ tables: [{ name: 'raw.x', maxAgeMinutes: 60 }] }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: [{ name: 'raw.x', lastRefreshAt: '0026-09-18T08:30:00Z' }],
+    }),
+  )
+  assert.deepEqual(ruleIds(report), ['table-late'])
+  const trueAge = Math.floor((ms(NOW) - ms('0026-09-18T08:30:00Z')) / 60000)
+  assert.equal(trueAge, 1051898430)
+  assert.match(report.findings[0].message, new RegExp(`is ${trueAge} minutes old`, 'u'))
+})
+
 test('a run that did not complete does not establish a refresh', async () => {
   const report = await audit(CHAIN_POLICY, snapshot({
     generatedAt: '2026-09-18T09:00:00Z',

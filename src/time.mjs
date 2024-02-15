@@ -30,6 +30,32 @@ function daysInMonth(year, month) {
 }
 
 /**
+ * Whole days from 1970-01-01 to a proleptic Gregorian civil date.
+ *
+ * `Date.UTC` is NOT used, and the reason is the same class of silent roll this
+ * tool refuses `Date.parse` for: `Date.UTC` applies the legacy two-digit-year
+ * rule of the language specification (ECMA-262, MakeFullYear), so a year in
+ * 0000-0099 is remapped into 1900-1999. `Date.UTC(26, 8, 18)` is 1926, not 26.
+ * A zero or sentinel timestamp is an ordinary artefact of a warehouse export,
+ * and reading `0026-09-18T08:30:00Z` as 1926 made this tool state a specific
+ * fifty-two-million-minute age as a fact about an instant no document contains.
+ *
+ * This is Hinnant's days_from_civil: exact integer arithmetic over the 400-year
+ * Gregorian cycle, with March as the first month of the internal year so the
+ * leap day lands at its end. It agrees with `Date.UTC` for every year this tool
+ * can parse from 0100 onwards, which the test suite asserts over the whole
+ * range rather than at a few points.
+ */
+function daysFromCivil(year, month, day) {
+  const shifted = month <= 2 ? year - 1 : year
+  const era = Math.floor(shifted / 400)
+  const yearOfEra = shifted - era * 400
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear
+  return era * 146097 + dayOfEra - 719468
+}
+
+/**
  * Parse one of the two accepted shapes.
  *
  * A sweep reports swapping these two alternatives as SURVIVING, and that is an
@@ -49,7 +75,9 @@ export function parseInstant(text) {
   // 24:00:00 and a leap second are both refused: neither is a point this tool
   // can order against another without inventing what the exporter meant.
   if (hour > 23 || minute > 59 || second > 59) return { ok: false }
-  return { ok: true, ms: Date.UTC(year, month - 1, day, hour, minute, second, milli) }
+  const ms = daysFromCivil(year, month, day) * 86400000
+    + hour * 3600000 + minute * 60000 + second * 1000 + milli
+  return { ok: true, ms }
 }
 
 /**

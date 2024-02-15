@@ -51,6 +51,44 @@ test('hour 24 and a leap second are refused', () => {
   assert.equal(parseInstant('2026-09-18T23:60:00Z').ok, false)
 })
 
+test('every component bound is accepted on its inside, not only refused past it', () => {
+  // The two tests above drive the N+1 side of each bound: month 13, month 0,
+  // hour 24, second 60. These are the N sides. Widening `month > 12` by one
+  // character makes every December instant unreadable, which in this tool means
+  // a snapshot generated in December is refused as `snapshot-invalid` -- and
+  // the suite that only refuses month 13 stays green while it happens.
+  assert.equal(parseInstant('2026-12-25').ms, Date.UTC(2026, 11, 25), 'December')
+  assert.equal(parseInstant('2026-12-31T23:59:59.999Z').ms, Date.UTC(2026, 11, 31, 23, 59, 59, 999))
+  assert.equal(parseInstant('2026-01-01').ms, Date.UTC(2026, 0, 1), 'month 1 and day 1, the low bounds')
+  assert.equal(parseInstant('2026-01-31').ms, Date.UTC(2026, 0, 31), 'the last day of a 31-day month')
+})
+
+test('a year under 100 is the year the document wrote, and never the 1900s', () => {
+  // `Date.UTC(26, 8, 18)` is 1926-09-18. The language remaps years 0000-0099
+  // into 1900-1999 (ECMA-262, MakeFullYear), which is the same class of silent
+  // roll this tool refuses `Date.parse` for. A sentinel or zeroed timestamp is
+  // an ordinary artefact of a warehouse export, and reading one that way made
+  // this tool state a fifty-two-million-minute age as a fact about an instant
+  // no document contains.
+  assert.equal(parseInstant('0026-09-18T08:30:00Z').ms < parseInstant('1926-09-18T08:30:00Z').ms, true)
+  assert.notEqual(parseInstant('0026-09-18').ms, parseInstant('1926-09-18').ms)
+  assert.equal(parseInstant('0001-01-01').ms, -62135596800000)
+  assert.equal(parseInstant('0000-02-29').ok, true, 'year 0 is a leap year in the proleptic calendar')
+  assert.equal(parseInstant('0100-02-29').ok, false, 'a century that is not a multiple of 400')
+
+  // From 0100 on, the arithmetic has to agree with `Date.UTC` exactly -- over
+  // the whole range the two shapes can express, not at three sample points.
+  let disagreements = 0
+  for (let year = 100; year <= 9999; year += 1) {
+    for (const [month, day] of [[1, 1], [2, 28], [3, 1], [12, 31]]) {
+      const text = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      const parsed = parseInstant(text)
+      if (!parsed.ok || parsed.ms !== Date.UTC(year, month - 1, day)) disagreements += 1
+    }
+  }
+  assert.equal(disagreements, 0)
+})
+
 test('the day names run from the weekday the epoch fell on', () => {
   assert.equal(DAY_NAMES.length, 7)
   assert.equal(dayNameAt(0, 0), 'thursday', '1970-01-01 was a Thursday')
