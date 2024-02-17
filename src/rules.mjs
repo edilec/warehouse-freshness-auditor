@@ -122,9 +122,26 @@ const EVIDENCE_MISSING_SET = new Set(EVIDENCE_MISSING_RULES)
 export const EVIDENCE_LIMIT = 200
 export const MAX_ID_LENGTH = 128
 
+/**
+ * The severity table as a Map, because a property lookup is not a table lookup.
+ *
+ * `RULE_SEVERITY['toString']` resolves `Object.prototype.toString`: an object
+ * literal answers for every member of its prototype as well as its own keys.
+ * The `undefined` check above therefore did not fire for those ids, and
+ * `severityFor` returned a FUNCTION. `makeFinding` then built a finding whose
+ * `severity` was that function, `JSON.stringify` dropped it -- the emitted
+ * finding had no `severity` field at all, which the report contract requires --
+ * and `statusFor` compared it against `'error'`, found it unequal, and reported
+ * the run as a pass. A Map answers for its own entries and nothing else.
+ */
+const SEVERITY_BY_ID = new Map(Object.entries(RULE_SEVERITY))
+
 export function severityFor(ruleId) {
-  const severity = RULE_SEVERITY[ruleId]
-  if (severity === undefined) throw new Error(`Unknown ruleId "${ruleId}"`)
+  const severity = SEVERITY_BY_ID.get(ruleId)
+  // Sanitised, and not interpolated raw: a library caller can reach here with
+  // a value that `String()` throws on, and an unknown rule id must produce this
+  // error rather than a TypeError from the message that describes it.
+  if (severity === undefined) throw new Error(`Unknown ruleId "${sanitize(ruleId, MAX_ID_LENGTH)}"`)
   return severity
 }
 

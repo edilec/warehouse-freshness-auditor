@@ -13,7 +13,9 @@ import {
   SEVERITIES,
   TOOL_ID,
   byCodeUnit,
+  makeFinding,
   marksEvidenceMissing,
+  msg,
   severityFor,
 } from '../src/index.mjs'
 import { ROOT } from './helpers.mjs'
@@ -33,6 +35,33 @@ test('every rule id has a severity drawn from the declared set', () => {
 test('an unknown rule id throws instead of defaulting to something harmless', () => {
   assert.throws(() => severityFor('invented-rule'), /Unknown ruleId/u)
   assert.throws(() => marksEvidenceMissing('invented-rule'), /Unknown ruleId/u)
+})
+
+test('a rule id that names a prototype member throws too, and emits no finding', () => {
+  // `invented-rule` above is the one class of name that does NOT reach through
+  // an object literal. `RULE_SEVERITY['toString']` resolved
+  // `Object.prototype.toString`, so severityFor returned a FUNCTION instead of
+  // throwing: makeFinding built a finding whose severity was that function,
+  // JSON.stringify dropped it -- leaving a finding with no `severity` field,
+  // which the report contract makes required -- and statusFor read the run as a
+  // pass. The name of the test above claimed this; only its body did not.
+  for (const id of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__']) {
+    assert.throws(() => severityFor(id), /Unknown ruleId/u, id)
+    assert.throws(() => marksEvidenceMissing(id), /Unknown ruleId/u, id)
+    assert.throws(() => makeFinding(id, msg`something`, { file: 'a.json' }), /Unknown ruleId/u, id)
+  }
+
+  // A value that cannot be converted to a primitive at all must still produce
+  // that error rather than a TypeError from the message describing it.
+  assert.throws(() => severityFor({ toString: {} }), /Unknown ruleId "\[object\]"/u)
+
+  // And the positive side, so this test is not satisfied by a severityFor that
+  // throws for everything: every real id still answers, and every finding
+  // built from one carries a severity that survives JSON.
+  for (const id of RULE_IDS) {
+    const finding = makeFinding(id, msg`something`, { file: 'a.json' })
+    assert.equal(SEVERITIES.includes(JSON.parse(JSON.stringify(finding)).severity), true, id)
+  }
 })
 
 test('the evidence-missing list is a subset of the catalog, and names the honest ids', () => {
