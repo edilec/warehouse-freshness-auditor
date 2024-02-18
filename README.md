@@ -226,7 +226,15 @@ fresh".
 
 Suspension governs reporting, not arithmetic. When a suspended table appears in
 another table's lineage, it is still judged against its own deadline for the
-purpose of attributing a cause.
+purpose of attributing a cause -- it has still not refreshed, and that is still
+why a governed descendant of it is late.
+
+The finding that names it says which fact it rests on. It reports the upstream's
+age and the limit the policy has taken out of force for it, naming the
+suspension, rather than asserting the upstream is above a limit in the same
+report that says it was not compared against one; and it suggests deciding in
+the policy whether the descendant is suspended alongside it, rather than
+recovering a table the policy deliberately excused.
 
 ## Exit codes
 

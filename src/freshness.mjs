@@ -59,6 +59,20 @@ export function suspensionFor(table, nowMs, calendar) {
 }
 
 /**
+ * The clause that says why a deadline is out of force, in the same words the
+ * matching `sla-suspended-*` finding uses.
+ *
+ * Built with `msg` rather than as a plain string so its literals go through the
+ * forbidden-claim check like every other sentence this tool writes, and so the
+ * window id -- which comes from the policy document -- is sanitised.
+ */
+function describeSuspension(suspension) {
+  return suspension.kind === 'maintenance'
+    ? msg`maintenance window ${suspension.id}`
+    : msg`the instant given to --now falls on a ${suspension.day}`
+}
+
+/**
  * When a table last refreshed, according to the snapshot alone.
  *
  * `lastRefreshAt` is the statement; a completed run that ended LATER than it
@@ -134,7 +148,13 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
     if (refresh.kind === 'conflict') return { kind: 'unknown', why: 'the snapshot disagrees with itself about it' }
     if (refresh.ms > nowMs) return { kind: 'unknown', why: 'its last refresh is after the instant given to --now' }
     const age = minutesBetween(refresh.ms, nowMs)
-    return age > table.maxAgeMinutes ? { kind: 'late', age, table } : { kind: 'fresh', age }
+    if (age <= table.maxAgeMinutes) return { kind: 'fresh', age }
+    // Suspension governs REPORTING, not arithmetic: this table has still not
+    // refreshed, and that is still why a governed descendant of it is late. The
+    // suspension travels with the verdict because the SENTENCE has to change --
+    // a report that says this table "was not compared against its deadline" may
+    // not also assert it is above one.
+    return { kind: 'late', age, table, suspension: suspensionFor(table, nowMs, calendar) }
   }
 
   /**
@@ -270,15 +290,35 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
     if (traced.outcome === 'upstream') {
       const root = traced.chain.at(-1)
       const rootVerdict = classify(root)
-      emit(
-        'table-late-upstream',
-        msg`${table.name} is ${String(age)} minutes old, above its ${String(table.maxAgeMinutes)}
-            minute limit, and its upstream chain ${chainText} is late at its far end: ${root} is
-            ${String(rootVerdict.age)} minutes old, above its ${String(rootVerdict.table.maxAgeMinutes)}
-            minute limit.`,
-        at(file, pointer),
-        { suggestion: 'Recover the upstream at the far end of the chain first.' },
-      )
+      const rootAge = String(rootVerdict.age)
+      const rootLimit = String(rootVerdict.table.maxAgeMinutes)
+      if (rootVerdict.suspension === null) {
+        emit(
+          'table-late-upstream',
+          msg`${table.name} is ${String(age)} minutes old, above its ${String(table.maxAgeMinutes)}
+              minute limit, and its upstream chain ${chainText} is late at its far end: ${root} is
+              ${rootAge} minutes old, above its ${rootLimit} minute limit.`,
+          at(file, pointer),
+          { suggestion: 'Recover the upstream at the far end of the chain first.' },
+        )
+      } else {
+        // The policy took the far end's deadline out of force for this instant,
+        // so the same report carries an `sla-suspended-*` finding saying it was
+        // not compared against one. Its age is still a fact this run computed
+        // and still the cause, but claiming it is "above its limit" here would
+        // contradict that finding, and the operator would be sent to recover a
+        // table the policy deliberately excused.
+        emit(
+          'table-late-upstream',
+          msg`${table.name} is ${String(age)} minutes old, above its ${String(table.maxAgeMinutes)}
+              minute limit, and the far end of its upstream chain ${chainText} has not refreshed
+              either: ${root} is ${rootAge} minutes old, past a ${rootLimit} minute limit the policy
+              has taken out of force for it (${describeSuspension(rootVerdict.suspension)}), so
+              ${root} is reported as suspended rather than late.`,
+          at(file, pointer),
+          { suggestion: 'Decide in the policy whether this table is suspended alongside its upstream.' },
+        )
+      }
     } else {
       // The message is the same either way, because the lateness is the same
       // fact either way. The SUGGESTION is not: pointing at this table's own

@@ -435,3 +435,84 @@ test('a run where the policy suspended every deadline is not read as a clean war
   // dressed up as an incomplete run -- but it is never silent either.
   assert.equal(report.status, 'pass')
 })
+
+test('a late upstream whose deadline the policy suspended is named as suspended, not as late', async () => {
+  // One report used to contain two findings that contradict each other:
+  // `sla-suspended-maintenance` saying raw.orders "was not compared against its
+  // deadline", and `table-late-upstream` asserting in the same report that
+  // raw.orders "is 480 minutes old, above its 60 minute limit" -- then telling
+  // the operator to recover, first, a table the policy had deliberately
+  // excused. The attribution itself is right and stays: raw.orders really has
+  // not refreshed, and that really is why mart.orders is late. What was wrong
+  // was saying WHICH fact it rests on. A deadline the policy took out of force
+  // is not a deadline the upstream missed.
+  const suspendedUpstream = policy({
+    limits: { maxSnapshotAgeMinutes: 1440 },
+    calendar: {
+      maintenanceWindows: [{ id: 'w1', start: '2026-09-18T07:00:00Z', end: '2026-09-18T12:00:00Z' }],
+    },
+    tables: [
+      { name: 'raw.orders', maxAgeMinutes: 60, suspendDuringMaintenance: true },
+      { name: 'mart.orders', maxAgeMinutes: 120 },
+    ],
+  })
+  const documents = snapshot({
+    generatedAt: '2026-09-18T09:00:00Z',
+    tables: [
+      { name: 'raw.orders', lastRefreshAt: '2026-09-18T01:00:00Z' },
+      { name: 'mart.orders', lastRefreshAt: '2026-09-18T02:00:00Z', upstream: ['raw.orders'] },
+    ],
+  })
+
+  const report = await audit(suspendedUpstream, documents)
+  assert.deepEqual(ruleIds(report), ['sla-suspended-maintenance', 'table-late-upstream'])
+  const propagated = findingsFor(report, 'table-late-upstream')[0]
+
+  // The lateness of the reported table, and the age of the upstream, are both
+  // facts this run established, and both are still stated.
+  assert.match(propagated.message, /^mart\.orders is 420 minutes old, above its 120 minute limit/u)
+  assert.match(propagated.message, /raw\.orders is 480 minutes old/u)
+
+  // What may not be said is that the upstream is above a limit that is in
+  // force for it, in a report that also says it was not compared against one.
+  assert.equal(propagated.message.includes('above its 60 minute limit'), false)
+  assert.match(propagated.message, /the policy has taken out of force for it \(maintenance window w1\)/u)
+  assert.match(propagated.message, /reported as suspended rather than late/u)
+  assert.equal(propagated.suggestion, 'Decide in the policy whether this table is suspended alongside its upstream.')
+
+  // The same lineage with the suspension lifted keeps the plain wording, so
+  // this test cannot be satisfied by a tool that never says "above its limit".
+  const outside = await audit(suspendedUpstream, documents, '2026-09-18T12:00:00Z')
+  const plain = findingsFor(outside, 'table-late-upstream')[0]
+  assert.match(plain.message, /raw\.orders is 660 minutes old, above its 60 minute limit\.$/u)
+  assert.equal(plain.suggestion, 'Recover the upstream at the far end of the chain first.')
+  assert.equal(plain.message.includes('out of force'), false)
+})
+
+test('a non-business-day suspension names the day it rests on in the upstream finding', async () => {
+  // The second suspension kind takes the other branch of the same sentence.
+  const report = await audit(
+    policy({
+      limits: { maxSnapshotAgeMinutes: 1440 },
+      calendar: { businessDays: BUSINESS_DAYS },
+      tables: [
+        { name: 'raw.orders', maxAgeMinutes: 60, suspendOnNonBusinessDays: true },
+        { name: 'mart.orders', maxAgeMinutes: 120 },
+      ],
+    }),
+    snapshot({
+      generatedAt: '2026-09-19T01:00:00Z',
+      tables: [
+        { name: 'raw.orders', lastRefreshAt: '2026-09-19T00:00:00Z' },
+        { name: 'mart.orders', lastRefreshAt: '2026-09-19T00:10:00Z', upstream: ['raw.orders'] },
+      ],
+    }),
+    '2026-09-19T06:00:00Z',
+  )
+  const propagated = findingsFor(report, 'table-late-upstream')[0]
+  assert.match(
+    propagated.message,
+    /out of force for it \(the instant given to --now falls on a saturday\)/u,
+  )
+  assert.equal(propagated.message.includes('above its 60 minute limit'), false)
+})
