@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 
-import { auditSnapshot, refreshOf, readSnapshot, suspensionFor, DEFAULT_LIMITS } from '../src/index.mjs'
+import { auditSnapshot, byCodeUnit, refreshOf, readSnapshot, suspensionFor, DEFAULT_LIMITS } from '../src/index.mjs'
 import { cleanup, findingsFor, ms, policy, project, ruleIds, snapshot, workspace, writeJson } from './helpers.mjs'
 import { join } from 'node:path'
 
@@ -114,26 +114,47 @@ test('a governed upstream the snapshot does not hold leaves the cause unsettled'
 })
 
 test('the chain does not depend on the order the snapshot lists upstream edges in', async () => {
+  // Which table is named as the root cause is this tool's primary output, and
+  // it is decided by sorting the upstream names. This test used to use
+  // 'a.left' and 'z.right' -- a pair that orders IDENTICALLY under code unit
+  // and under ICU collation, so it could not tell the two apart and a collator
+  // substituted at that sort changed the blamed table with the suite green.
+  //
+  // 'Z.raw' and 'a.raw' genuinely disagree: 'Z' (U+005A) precedes 'a' (U+0061)
+  // by code unit, while collation sorts by letter first and puts 'a.raw' ahead.
+  // Verify by substituting `new Intl.Collator().compare` at the sort in
+  // `trace`: this assertion fails and names 'a.raw'.
   const build = (upstream) => snapshot({
     generatedAt: '2026-09-18T09:00:00Z',
     tables: [
       { name: 'mart.daily', lastRefreshAt: '2026-09-18T01:00:00Z', upstream },
-      { name: 'a.left', lastRefreshAt: '2026-09-18T01:00:00Z' },
-      { name: 'z.right', lastRefreshAt: '2026-09-18T01:00:00Z' },
+      { name: 'Z.raw', lastRefreshAt: '2026-09-18T01:00:00Z' },
+      { name: 'a.raw', lastRefreshAt: '2026-09-18T01:00:00Z' },
     ],
   })
   const governed = governs(
     { name: 'mart.daily', maxAgeMinutes: 120 },
-    { name: 'a.left', maxAgeMinutes: 60 },
-    { name: 'z.right', maxAgeMinutes: 60 },
+    { name: 'Z.raw', maxAgeMinutes: 60 },
+    { name: 'a.raw', maxAgeMinutes: 60 },
   )
 
-  const forwards = await audit(governed, build(['a.left', 'z.right']))
-  const backwards = await audit(governed, build(['z.right', 'a.left']))
-  const chainOf = (report) => findingsFor(report, 'table-late-upstream')[0].message
+  const forwards = await audit(governed, build(['Z.raw', 'a.raw']))
+  const backwards = await audit(governed, build(['a.raw', 'Z.raw']))
+  const chainOf = (report) => findingsFor(report, 'table-late-upstream')
+    .find((finding) => finding.message.startsWith('mart.daily')).message
 
-  assert.match(chainOf(forwards), /mart\.daily <- a\.left/u)
+  // The exact chain, not merely a stable one: a tool that blamed the same
+  // wrong table in both documents would satisfy the equality alone.
+  assert.match(chainOf(forwards), /upstream chain mart\.daily <- Z\.raw is late at its far end: Z\.raw is 480 minutes old/u)
+  assert.equal(chainOf(forwards).includes('a.raw'), false)
   assert.equal(chainOf(forwards), chainOf(backwards))
+
+  // The pair the previous version used, kept as the reason it was not enough:
+  // both orderings agree here, so an assertion over these two names is
+  // satisfied by either sort.
+  const collator = new Intl.Collator().compare
+  assert.equal(Math.sign(collator('a.left', 'z.right')), Math.sign(byCodeUnit('a.left', 'z.right')))
+  assert.notEqual(Math.sign(collator('Z.raw', 'a.raw')), Math.sign(byCodeUnit('Z.raw', 'a.raw')))
 })
 
 test('suspensionFor refuses to suspend against a working week that was not declared', () => {
