@@ -10,8 +10,8 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 
-import { RULE_IDS, auditSnapshot, renderReport } from '../src/index.mjs'
-import { cleanup, ms, policy, project, snapshot } from './helpers.mjs'
+import { RULE_IDS, UNKNOWN_REASONS, auditSnapshot, byCodeUnit, renderReport } from '../src/index.mjs'
+import { cleanup, findingsFor, ms, policy, project, snapshot } from './helpers.mjs'
 
 after(cleanup)
 
@@ -140,4 +140,63 @@ test('two runs over identical inputs produce byte-identical stdout', async () =>
   const second = renderReport(await audit(...documents))
   assert.equal(first, second)
   assert.equal(first.includes('"ruleId"'), true)
+})
+
+test('the upstream names in an undetermined cause are ordered by code unit', async () => {
+  // The names come from the snapshot, so they can be anything, and this order
+  // is emitted text: substituting a collator at the sort in `cause-undetermined`
+  // reorders the list with the rest of the suite green. 'Z.x' precedes 'a.x' by
+  // code unit (U+005A before U+0061) and follows it under collation, so this
+  // assertion distinguishes the two orderings rather than agreeing with both.
+  const document = (upstream) => snapshot({
+    generatedAt: '2026-09-18T09:00:00Z',
+    tables: [
+      { name: 'mart.daily', lastRefreshAt: '2026-09-18T01:00:00Z', upstream },
+      { name: 'Z.x', lastRefreshAt: '2026-09-18T01:00:00Z' },
+      { name: 'a.x', lastRefreshAt: '2026-09-18T01:00:00Z' },
+      { name: 'b.gap' },
+    ],
+  })
+  const governed = policy({
+    limits: { maxSnapshotAgeMinutes: 1440 },
+    tables: [{ name: 'mart.daily', maxAgeMinutes: 120 }, { name: 'b.gap', maxAgeMinutes: 60 }],
+  })
+
+  const forwards = await audit(governed, document(['a.x', 'Z.x', 'b.gap']))
+  const backwards = await audit(governed, document(['b.gap', 'Z.x', 'a.x']))
+  const causeOf = (report) => findingsFor(report, 'cause-undetermined')[0].message
+
+  assert.match(causeOf(forwards), /why is not settled: Z\.x, a\.x, b\.gap could not be judged/u)
+  assert.equal(causeOf(forwards), causeOf(backwards))
+
+  // And the reasons beside them, in the one order this set can take. This
+  // assertion CANNOT tell a collator from code unit -- the proof that it does
+  // not need to is the closed-set test below, which is the honest division of
+  // labour rather than a second assertion that would agree with both.
+  assert.match(
+    causeOf(forwards),
+    /\(the policy declares no maxAgeMinutes for it; the snapshot holds no refresh history for it\)/u,
+  )
+})
+
+test('the reasons an upstream cannot be judged sort the same either way, which is why a collator there is equivalent', () => {
+  // A mutation sweep reports substituting a collator at the REASON sort as
+  // surviving. Naming that an equivalent mutant is a claim, so it is checked:
+  // over the closed set of reasons this tool can produce, code-unit order and
+  // ICU collation are the same permutation, and every subset of a set with that
+  // property has it too. A sixth reason that broke it fails here instead of
+  // making the emitted message depend on the Node build's ICU data.
+  const reasons = Object.values(UNKNOWN_REASONS)
+  assert.equal(reasons.length, 5)
+  assert.equal(new Set(reasons).size, 5)
+  const collator = new Intl.Collator()
+  assert.deepEqual([...reasons].sort(byCodeUnit), [...reasons].sort(collator.compare))
+
+  // Non-vacuous: the same comparison over names a snapshot may legally use
+  // disagrees, so this assertion is a property of THIS set and not of the two
+  // orderings in general.
+  assert.notDeepEqual(
+    ['Z.x', 'a.x'].sort(byCodeUnit),
+    ['Z.x', 'a.x'].sort(collator.compare),
+  )
 })

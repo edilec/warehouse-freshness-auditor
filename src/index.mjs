@@ -48,7 +48,7 @@ import {
   statusFor,
 } from './rules.mjs'
 
-export { MAX_NAMED_UPSTREAMS, auditFreshness, refreshOf, suspensionFor } from './freshness.mjs'
+export { MAX_NAMED_UPSTREAMS, UNKNOWN_REASONS, auditFreshness, refreshOf, suspensionFor } from './freshness.mjs'
 export { RUN_STATES, readSnapshot } from './snapshot.mjs'
 export {
   DEFAULT_LIMITS,

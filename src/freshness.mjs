@@ -59,6 +59,26 @@ export function suspensionFor(table, nowMs, calendar) {
 }
 
 /**
+ * Why an upstream could not be judged: the closed set, written once.
+ *
+ * `cause-undetermined` sorts these by code unit before printing them, and a
+ * sweep reports substituting a collator at that sort as SURVIVING. That is an
+ * EQUIVALENT MUTANT, and this constant is what lets the claim be checked rather
+ * than taken on trust: over THESE five strings code-unit order and ICU
+ * collation are the same permutation, which the test suite asserts, so a sixth
+ * reason that broke the property would fail a test instead of quietly making
+ * the message machine-dependent. The upstream NAMES beside them come from the
+ * snapshot, can be anything, and are pinned behaviourally instead.
+ */
+export const UNKNOWN_REASONS = Object.freeze({
+  ungoverned: 'the policy declares no maxAgeMinutes for it',
+  absentTable: 'it is not in the snapshot',
+  absentHistory: 'the snapshot holds no refresh history for it',
+  conflict: 'the snapshot disagrees with itself about it',
+  ahead: 'its last refresh is after the instant given to --now',
+})
+
+/**
  * The clause that says why a deadline is out of force, in the same words the
  * matching `sla-suspended-*` finding uses.
  *
@@ -141,12 +161,12 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
 
   const classifyUncached = (name) => {
     const table = governed.get(name)
-    if (table === undefined) return { kind: 'unknown', why: 'the policy declares no maxAgeMinutes for it' }
+    if (table === undefined) return { kind: 'unknown', why: UNKNOWN_REASONS.ungoverned }
     const refresh = refreshOf(name, snapshot)
-    if (refresh.kind === 'absent-table') return { kind: 'unknown', why: 'it is not in the snapshot' }
-    if (refresh.kind === 'absent') return { kind: 'unknown', why: 'the snapshot holds no refresh history for it' }
-    if (refresh.kind === 'conflict') return { kind: 'unknown', why: 'the snapshot disagrees with itself about it' }
-    if (refresh.ms > nowMs) return { kind: 'unknown', why: 'its last refresh is after the instant given to --now' }
+    if (refresh.kind === 'absent-table') return { kind: 'unknown', why: UNKNOWN_REASONS.absentTable }
+    if (refresh.kind === 'absent') return { kind: 'unknown', why: UNKNOWN_REASONS.absentHistory }
+    if (refresh.kind === 'conflict') return { kind: 'unknown', why: UNKNOWN_REASONS.conflict }
+    if (refresh.ms > nowMs) return { kind: 'unknown', why: UNKNOWN_REASONS.ahead }
     const age = minutesBetween(refresh.ms, nowMs)
     if (age <= table.maxAgeMinutes) return { kind: 'fresh', age }
     // Suspension governs REPORTING, not arithmetic: this table has still not
