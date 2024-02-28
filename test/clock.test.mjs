@@ -20,8 +20,22 @@ import { BUSINESS_DAYS, cleanup, ms, policy, project, snapshot } from './helpers
 
 after(cleanup)
 
-/** Everything that could tell this process what time it is, made to throw. */
-function withNoClock(body) {
+/**
+ * Everything that could tell this process what time it is, made to throw.
+ *
+ * `await body()` inside the try, and not `return body()`, is the whole guard.
+ * The audit is ASYNC: a `finally` that fires when the promise is merely
+ * RETURNED restores the real `Date` before the first `await` inside
+ * `readPolicy` has even resumed, so only the synchronous prefix of the run is
+ * covered. That is how this test file shipped, and `Date.now()` injected as the
+ * first statement of `auditFreshness` -- the heart of the run -- left the whole
+ * suite green while the header of this file claimed the opposite.
+ *
+ * Awaiting means the guard is installed across event-loop turns, so the tests
+ * below must stay sequential; `node --test` runs the tests in one file in order
+ * unless a file asks otherwise, and this one does not.
+ */
+async function withNoClock(body) {
   const RealDate = globalThis.Date
   globalThis.Date = new Proxy(RealDate, {
     construct(target, args, newTarget) {
@@ -38,18 +52,37 @@ function withNoClock(body) {
     },
   })
   try {
-    return body()
+    return await body()
   } finally {
     globalThis.Date = RealDate
   }
 }
 
-test('the guard itself catches a clock read, so the tests below are not vacuous', () => {
-  assert.throws(() => withNoClock(() => Date.now()), /a clock was read: Date\.now/u)
-  assert.throws(() => withNoClock(() => new Date()), /a clock was read: new Date/u)
-  assert.throws(() => withNoClock(() => Date.parse('2026-09-18')), /a clock was read: Date\.parse/u)
+test('the guard itself catches a clock read, so the tests below are not vacuous', async () => {
+  await assert.rejects(withNoClock(() => Date.now()), /a clock was read: Date\.now/u)
+  await assert.rejects(withNoClock(() => new Date()), /a clock was read: new Date/u)
+  await assert.rejects(withNoClock(() => Date.parse('2026-09-18')), /a clock was read: Date\.parse/u)
   // Arithmetic over supplied numbers is untouched.
-  assert.equal(withNoClock(() => Date.UTC(2026, 8, 18)), Date.UTC(2026, 8, 18))
+  assert.equal(await withNoClock(() => Date.UTC(2026, 8, 18)), Date.UTC(2026, 8, 18))
+})
+
+test('the guard survives an await, which is the whole point of it', async () => {
+  // The self-check above is synchronous, and a synchronous body is exactly the
+  // case the broken version handled correctly -- which is what hid the hole.
+  // This one reads the clock only AFTER yielding to the event loop, so it fails
+  // against a `withNoClock` whose finally fires when the promise is returned.
+  await assert.rejects(
+    withNoClock(async () => {
+      await Promise.resolve()
+      await new Promise((resolve) => { setImmediate(resolve) })
+      return Date.now()
+    }),
+    /a clock was read: Date\.now/u,
+  )
+
+  // And it is taken down again afterwards, so nothing below runs guarded by
+  // accident: a leaked proxy would make every later Date.now() throw.
+  assert.equal(Number.isFinite(Date.now()), true)
 })
 
 test('a full audit completes with every clock read made to throw', async () => {
@@ -79,9 +112,16 @@ test('a full audit completes with every clock read made to throw', async () => {
   const now = ms('2026-09-18T09:00:00Z')
 
   const normal = renderReport(await auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now }))
-  const guarded = await withNoClock(() => auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now }))
 
-  assert.equal(renderReport(guarded), normal)
-  assert.equal(guarded.status, 'incomplete')
-  assert.equal(guarded.findings.length > 0, true)
+  // Reading the documents, auditing them and RENDERING the report all happen
+  // inside the guard: rendering outside it would leave the last stage of the
+  // run unguarded for the same reason the whole run used to be.
+  const guarded = await withNoClock(async () => {
+    const report = await auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now })
+    return { report, rendered: renderReport(report) }
+  })
+
+  assert.equal(guarded.rendered, normal)
+  assert.equal(guarded.report.status, 'incomplete')
+  assert.equal(guarded.report.findings.length > 0, true)
 })
