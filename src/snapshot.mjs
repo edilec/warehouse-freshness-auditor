@@ -237,6 +237,21 @@ export async function readSnapshot(path, limits) {
           { pointer },
         )
       }
+      // `startedAt` is in the accepted key set, so a snapshot carrying it is not
+      // refused -- which means it is a key this tool says it understands, and a
+      // key this tool says it understands has to be checked. Nothing reads its
+      // value today; a run record whose startedAt is `99999` or
+      // "not-a-date-at-all" was accepted in silence, the one field that was
+      // neither refused as unknown nor checked as known.
+      if (entry.startedAt !== undefined && entry.startedAt !== null) {
+        if (!parseInstant(entry.startedAt).ok) {
+          return refuse(
+            'snapshot-invalid',
+            msg`run ${entry.runId} has a startedAt this tool does not read.`,
+            { pointer: `${pointer}/startedAt` },
+          )
+        }
+      }
       let endedMs = null
       if (entry.endedAt !== undefined && entry.endedAt !== null) {
         const ended = parseInstant(entry.endedAt)

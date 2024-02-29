@@ -268,6 +268,50 @@ test('a run endedAt this tool does not read is refused rather than guessed at', 
   })
 })
 
+test('a run startedAt this tool does not read is refused rather than accepted in silence', async () => {
+  // `startedAt` is in the accepted key set, so a snapshot carrying it is not
+  // stopped as an unknown key -- and nothing read or checked it either, so a
+  // run record saying `99999` or "not-a-date-at-all" passed through to
+  // `status: "pass"` and exit 0. It was the one field that was neither refused
+  // as unknown nor checked as known, while the README says a key this tool does
+  // not read stops the document.
+  for (const value of ['not-a-date-at-all', 99999, '2026-02-30', '2026-09-18T24:00:00Z', true]) {
+    const report = await auditDocument({
+      schemaVersion: '1',
+      generatedAt: NOW,
+      tables: [],
+      runs: [{ table: 'a.table', runId: 'r-1', state: 'failed', startedAt: value }],
+    })
+    assert.equal(report.status, 'incomplete', String(value))
+    const invalid = findingsFor(report, 'snapshot-invalid')[0]
+    assert.equal(invalid.message, 'run r-1 has a startedAt this tool does not read.', String(value))
+    assert.deepEqual(invalid.location, { file: 'snapshot.json', pointer: '/runs/0/startedAt' })
+  }
+})
+
+test('a startedAt this tool does read leaves the run alone, and so does its absence', async () => {
+  // The other side of the guard, and the side users notice: a checker that
+  // refuses a legal export is worse than one that misses a bad one. Both
+  // accepted instant shapes, both explicit empties, and the field left out.
+  const documents = [
+    { startedAt: '2026-09-18T08:35:00Z' },
+    { startedAt: '2026-09-18' },
+    { startedAt: null },
+    { startedAt: undefined },
+    {},
+  ]
+  for (const extra of documents) {
+    const report = await auditDocument({
+      schemaVersion: '1',
+      generatedAt: NOW,
+      tables: [{ name: 'a.table', lastRefreshAt: '2026-09-18T08:30:00Z' }],
+      runs: [{ table: 'a.table', runId: 'r-1', state: 'complete', endedAt: '2026-09-18T08:30:00Z', ...extra }],
+    })
+    assert.deepEqual(report.findings, [], JSON.stringify(extra))
+    assert.equal(report.status, 'pass', JSON.stringify(extra))
+  }
+})
+
 test('an upstream named twice in one row is one edge, not two findings', async () => {
   const report = await auditDocument(snapshot({
     generatedAt: '2026-09-18T09:00:00Z',

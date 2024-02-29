@@ -153,6 +153,10 @@ A key this tool does not read stops the document rather than being ignored, so
 a snapshot carrying evidence in a field this version cannot see is never treated
 as though it had been understood.
 
+`startedAt` is the one accepted key whose value nothing reads. It is still
+checked: it must be an instant in one of the two shapes below, exactly as
+`endedAt` must, because a key this tool accepts is a key it says it understands.
+
 ### Instants
 
 Only `YYYY-MM-DD` and `YYYY-MM-DDTHH:MM:SS[.sss]Z`, in UTC. `Date.parse` is not
@@ -204,7 +208,7 @@ their collation depends on ICU data that varies between Node builds.
 path, and it is the same in every finding of one report because one report
 describes one snapshot. `location.pointer` is a JSON Pointer into that document:
 `/generatedAt`, `/tables/<index>`, `/tables/<index>/lastRefreshAt`,
-`/runs/<index>` or `/runs/<index>/endedAt`.
+`/runs/<index>`, `/runs/<index>/startedAt` or `/runs/<index>/endedAt`.
 
 ## Suspension, and what a suspended run reports
 
