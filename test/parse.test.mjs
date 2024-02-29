@@ -50,10 +50,38 @@ test('a long document with a sensitive prefix loses the prefix, not just the tai
   assert.equal(detail.includes('password'), false)
 })
 
-test('a quoted span reported from the middle of the document shows none of it', () => {
+test('a short document V8 quotes WHOLE is reported as being at the start', () => {
+  // The name this test used to carry said "from the middle of the document",
+  // and this document is not that case: V8 quotes a document this short in
+  // full, with no leading ellipsis, so the helper correctly says "at the
+  // start". It was also absence-only -- it asserted the snippet was gone and
+  // nothing about what the detail IS, so it was satisfied by every path that
+  // produces nothing, including the ones that produce nothing for the wrong
+  // reason. The real middle-of-document case is the test below.
   const { message, detail } = failureFor('{"alpha":ZQXJVBMP7W}')
-  assert.equal(message.includes('ZQXJVBMP7W'), true)
+  assert.equal(message, `Unexpected token 'Z', "{"alpha":ZQXJVBMP7W}" is not valid JSON`)
+  assert.equal(message.includes('...'), false, 'no ellipsis: the whole document is quoted')
+  assert.equal(detail, "unexpected token 'Z' at the start of the document")
   assert.equal(detail.includes('ZQXJVBMP7W'), false)
+})
+
+test('a quoted span reported from the middle of the document says so, and shows none of it', () => {
+  // A document long enough that V8 quotes a WINDOW of it rather than all of
+  // it, marked at both ends with an ellipsis. That is the arm the contract
+  // warns about -- the quoted span is taken from wherever the offence is, so
+  // "truncate the front" is not a fix -- and until now no test in this suite
+  // reached it: the branch's own wording, "inside the document", appeared
+  // nowhere outside the source.
+  const secret = 'ZQXJVBMP7W'
+  const { message, detail } = failureFor(`{"alpha": "${'x'.repeat(200)}", "b": ${secret}}`)
+  assert.match(message, /^Unexpected token 'Z', \.\.\."/u, 'V8 quotes a window, not the whole document')
+  assert.equal(message.includes(secret), true)
+
+  // The positive pin: WHICH arm ran, not merely that the secret is absent.
+  assert.equal(detail, "unexpected token 'Z' inside the document")
+  assert.equal(detail.includes(secret), false)
+  assert.equal(detail.includes('x'.repeat(4)), false)
+  assert.equal(detail.includes('"'), false)
 })
 
 test('a quoted span containing a newline is still recognised as a quoted span', () => {
