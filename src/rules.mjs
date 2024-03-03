@@ -271,18 +271,6 @@ export function isRenderableString(value, limit = MAX_ID_LENGTH) {
   return typeof value === 'string' && value.length <= limit && sanitize(value, limit) !== ''
 }
 
-/** A number as the report prints it: finite, bounded, no exponent surprises. */
-export function num(value) {
-  if (!Number.isFinite(value)) return describeValue(value)
-  const rounded = Math.round(value * 10000) / 10000
-  // `String(-0)` is already `'0'` in ECMAScript, so this arm changes no byte
-  // today and a sweep reports removing it as surviving -- an EQUIVALENT MUTANT.
-  // It stays as the one thing that would keep a negative zero out of a report
-  // if the rounding step above were ever replaced with something that formats
-  // it differently, which is how `-0` reaches output in other languages.
-  return Object.is(rounded, -0) ? '0' : String(rounded)
-}
-
 const UNPARSEABLE = 'the document could not be parsed as JSON'
 
 /** Where V8 puts the offending offset. Safe: an offset says nothing about content. */

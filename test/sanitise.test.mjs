@@ -18,7 +18,6 @@ import {
   isRenderableString,
   makeFinding,
   msg,
-  num,
   sanitize,
 } from '../src/index.mjs'
 import { cleanup, ms, policy, project, snapshot } from './helpers.mjs'
@@ -132,11 +131,4 @@ test('a table whose own name contains a checked word does not stop the run', () 
   // The guard scans this tool's own voice, never the input it is describing.
   const built = msg`table ${'ops.live_query_log'} was not read.`
   assert.equal(built.text, 'table ops.live_query_log was not read.')
-})
-
-test('num keeps a report free of exponent and negative-zero surprises', () => {
-  assert.equal(num(1 / 3), '0.3333')
-  assert.equal(num(-0), '0')
-  assert.equal(num(Number.NaN), 'NaN')
-  assert.equal(num(Number.POSITIVE_INFINITY), 'Infinity')
 })

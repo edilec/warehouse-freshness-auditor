@@ -84,7 +84,6 @@ export {
   makeFinding,
   marksEvidenceMissing,
   msg,
-  num,
   parseFailureDetail,
   sanitize,
   severityFor,
