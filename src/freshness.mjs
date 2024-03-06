@@ -27,7 +27,7 @@
  */
 
 import { dayNameAt, minutesBetween, withinWindow } from './time.mjs'
-import { at, byCodeUnit, makeFinding, msg, sanitize } from './rules.mjs'
+import { MAX_FINDINGS, at, byCodeUnit, makeFinding, msg, sanitize } from './rules.mjs'
 
 /** How many upstream names one message spells out before it counts the rest. */
 export const MAX_NAMED_UPSTREAMS = 5
@@ -130,7 +130,12 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
   const findings = []
   const { calendar, limits } = policy
   const file = snapshot.file
+  let reachedLimit = false
   const emit = (ruleId, message, location, extra) => {
+    if (findings.length >= MAX_FINDINGS) {
+      reachedLimit = true
+      return
+    }
     findings.push(makeFinding(ruleId, message, location, extra))
   }
 
@@ -178,46 +183,68 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
   }
 
   /**
-   * Walk up from a late table to the deepest late ancestor.
+   * One step of the walk from one table, computed ONCE for that table.
    *
    * Upstream names are sorted by code unit before one is chosen, so a snapshot
    * that lists the same edges in a different order produces the same chain.
+   *
+   * Memoised for the same reason `classify` is, and it matters far more. The
+   * answer depends only on the snapshot and `nowMs`, both fixed for the run,
+   * and a lineage graph is normally shared: 1984 governed tables hanging off
+   * one 64-deep chain used to sort and classify that chain's 256 upstreams
+   * 1984 times over, allocating a gap record every time. That is
+   * `governed x depth x fan-out` -- 33 million records for an input inside
+   * every declared bound. Now it is one pass per table that appears in a walk.
+   *
+   * `gaps` is kept as the node's own array and handed out by reference, so a
+   * walk collects one reference per step instead of copying every gap.
    */
+  const steps = new Map()
+  const stepOf = (node) => {
+    const cached = steps.get(node)
+    if (cached !== undefined) return cached
+    const entry = snapshot.tables.get(node)
+    const parents = entry === undefined ? [] : [...entry.upstream].sort(byCodeUnit)
+    const gaps = []
+    let next = null
+    for (const parent of parents) {
+      const verdict = classify(parent)
+      if (verdict.kind === 'unknown') gaps.push({ child: node, upstream: parent, why: verdict.why })
+      // The first late parent in code-unit order, which is the one the sorted
+      // list used to yield as `late[0]`.
+      else if (verdict.kind === 'late' && next === null) next = parent
+    }
+    const step = { next, gaps }
+    steps.set(node, step)
+    return step
+  }
+
+  /** Walk up from a late table to the deepest late ancestor. */
   const trace = (start) => {
     const chain = [start]
     const onPath = new Set(chain)
-    const unknowns = []
+    const chunks = []
     let cursor = start
-    let outcome = 'local'
 
     for (let edges = 0; ; edges += 1) {
-      const entry = snapshot.tables.get(cursor)
-      const parents = entry === undefined ? [] : [...entry.upstream].sort(byCodeUnit)
-      const late = []
-      for (const parent of parents) {
-        const verdict = classify(parent)
-        if (verdict.kind === 'unknown') unknowns.push({ child: cursor, upstream: parent, why: verdict.why })
-        else if (verdict.kind === 'late') late.push(parent)
-      }
-      if (late.length === 0) {
-        outcome = chain.length > 1 ? 'upstream' : 'local'
-        break
+      const step = stepOf(cursor)
+      if (step.gaps.length > 0) chunks.push(step.gaps)
+      if (step.next === null) {
+        return { chain, chunks, outcome: chain.length > 1 ? 'upstream' : 'local' }
       }
       // The bound is checked only once there is another edge to take, so a
       // chain of exactly maxLineageDepth edges is walked to its end and only a
       // longer one is refused. Checking it before looking for a parent refuses
       // the chain that sits exactly on the documented limit.
-      if (edges === limits.maxLineageDepth) return { chain, unknowns, outcome: 'depth' }
-      const next = late[0]
-      if (onPath.has(next)) {
-        chain.push(next)
-        return { chain, unknowns, outcome: 'cycle' }
+      if (edges === limits.maxLineageDepth) return { chain, chunks, outcome: 'depth' }
+      if (onPath.has(step.next)) {
+        chain.push(step.next)
+        return { chain, chunks, outcome: 'cycle' }
       }
-      chain.push(next)
-      onPath.add(next)
-      cursor = next
+      chain.push(step.next)
+      onPath.add(step.next)
+      cursor = step.next
     }
-    return { chain, unknowns, outcome }
   }
 
   let checked = 0
@@ -378,23 +405,36 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
       )
     }
 
-    for (const gap of traced.unknowns) {
-      if (snapshot.tables.has(gap.upstream)) continue
-      const key = JSON.stringify([gap.child, gap.upstream])
-      if (reportedUpstream.has(key)) continue
-      reportedUpstream.add(key)
-      emit(
-        'upstream-unknown',
-        msg`${gap.child} names ${gap.upstream} as an upstream, and the snapshot holds no row for
-            that table, so this edge of the lineage leads nowhere this run can read.`,
-        at(file, snapshot.tables.get(gap.child)?.pointer),
-        { suggestion: 'Export the upstream table, or correct the lineage edge.' },
-      )
+    // One chunk holds every gap of one table, always the whole set, so a table
+    // already reported has nothing left to report. That is the same dedupe the
+    // per-(child, upstream) key performed, without building a key per gap.
+    for (const chunk of traced.chunks) {
+      const child = chunk[0].child
+      if (reportedUpstream.has(child)) continue
+      reportedUpstream.add(child)
+      for (const gap of chunk) {
+        if (snapshot.tables.has(gap.upstream)) continue
+        emit(
+          'upstream-unknown',
+          msg`${gap.child} names ${gap.upstream} as an upstream, and the snapshot holds no row for
+              that table, so this edge of the lineage leads nowhere this run can read.`,
+          at(file, snapshot.tables.get(gap.child)?.pointer),
+          { suggestion: 'Export the upstream table, or correct the lineage edge.' },
+        )
+      }
     }
 
-    if (traced.unknowns.length > 0) {
-      const names = [...new Set(traced.unknowns.map((gap) => gap.upstream))].sort(byCodeUnit)
-      const reasons = [...new Set(traced.unknowns.map((gap) => gap.why))].sort(byCodeUnit)
+    if (traced.chunks.length > 0) {
+      const nameSet = new Set()
+      const reasonSet = new Set()
+      for (const chunk of traced.chunks) {
+        for (const gap of chunk) {
+          nameSet.add(gap.upstream)
+          reasonSet.add(gap.why)
+        }
+      }
+      const names = [...nameSet].sort(byCodeUnit)
+      const reasons = [...reasonSet].sort(byCodeUnit)
       emit(
         'cause-undetermined',
         msg`${table.name} is late, and why is not settled: ${nameList(names)} could not be judged
@@ -404,6 +444,19 @@ export function auditFreshness({ policy, snapshot, nowMs }) {
         { suggestion: 'Govern the upstream tables in the policy, or export their refresh history.' },
       )
     }
+  }
+
+  // Pushed directly rather than through `emit`, because the finding that says
+  // the limit was reached is the one finding the limit may not drop.
+  if (reachedLimit) {
+    findings.push(makeFinding(
+      'finding-limit-exceeded',
+      msg`this audit reached its limit of ${String(MAX_FINDINGS)} findings and stopped emitting
+          them, so what is reported here is not everything it found and this run does not establish
+          the state of every governed table.`,
+      at(file),
+      { suggestion: 'Govern fewer tables in one run, or correct the lineage gaps the findings name.' },
+    ))
   }
 
   return { findings, checked, suspended, late, unknown }

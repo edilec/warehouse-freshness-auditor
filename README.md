@@ -170,6 +170,7 @@ without inventing what the exporter meant.
 | Rule id | Severity | Means the run did not reach a verdict |
 | --- | --- | --- |
 | `cause-undetermined` | error | yes |
+| `finding-limit-exceeded` | error | yes |
 | `lineage-cycle` | error | yes |
 | `lineage-depth-exceeded` | error | yes |
 | `no-deadline-in-force` | info | no |
@@ -282,6 +283,7 @@ size is taken from `stat` before the file is opened.
 | `limits.maxUpstreamPerTable` | 64 | 256 | yes |
 | `limits.maxLineageDepth` | 16 | 64 | yes |
 | `limits.maxSnapshotAgeMinutes` | 1440 | 43200 | yes |
+| findings per audit | 50000 | 50000 | no |
 
 A policy may **lower** a configurable bound and may never raise one past its
 ceiling: a limit a document could raise would be no limit at all. Exceeding a
@@ -293,12 +295,31 @@ walked to its far end; only a longer one is refused, and a table whose chain was
 cut reports its lateness together with `lineage-depth-exceeded` rather than
 being reported as late for a local reason.
 
-The snapshot's completed runs are indexed once when it is read, so a freshness
-question costs the same whatever the run history holds. Measured on this tool:
-2048 governed tables in a 2048-deep chain with 20000 run records took 21.9
-seconds before that index existed and 1.4 seconds after it; the ceiling case —
-20000 tables, 100000 runs, an 11 MB snapshot — finishes in 1.3 seconds under a
-512 MB heap.
+The findings bound is on the WORK, not only on the input. `upstream-unknown` is
+raised once per unreadable lineage edge, and the declared limits allow far more
+of them than a report can carry: 1280 governed tables each naming 256 absent
+upstreams fits inside the 16 MiB snapshot ceiling and produced 327,680 findings,
+a 134 MB report and a 1.25 GB peak RSS. Reaching the bound is never a silent
+truncation — the audit stops emitting and adds `finding-limit-exceeded`, so the
+run is `incomplete` and exits `2`.
+
+The snapshot's completed runs are indexed once when it is read, and each table
+in a lineage walk is classified and sorted once per run rather than once per
+descendant, so a freshness question costs the same whatever the run history
+holds and a shared chain is not re-walked for every table that hangs off it.
+
+Measured on this tool, on a 16-core machine under heavy concurrent load — so
+wall time is reported beside the CPU time that does not depend on that load:
+
+| Input | CPU (user) | Wall | Peak RSS |
+| --- | ---: | ---: | ---: |
+| ceiling, work-shaped: 20000 tables, 100000 runs, 10.9 MB, 2048 governed, 64-deep chain, 256 upstream per node | 4.4 s | 37.6 s | 363 MB |
+| the same before the per-table walk was made per-node | 25.5 s | 149.5 s | 522 MB |
+| ceiling, output-shaped: 1280 governed tables each naming 256 absent upstreams, 16.0 MB — the findings bound fires | 2.0 s | 14.7 s | 460 MB |
+
+The second row is kept because it is the measurement that found the defect. The
+wall figures are what the machine did while running dozens of other jobs; the
+CPU column is the one to compare.
 
 ## Verification
 

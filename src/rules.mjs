@@ -38,6 +38,7 @@ export const SEVERITIES = Object.freeze(['error', 'warning', 'info'])
 /** The one place a severity is written down. */
 export const RULE_SEVERITY = Object.freeze({
   'cause-undetermined': 'error',
+  'finding-limit-exceeded': 'error',
   'lineage-cycle': 'error',
   'lineage-depth-exceeded': 'error',
   'no-deadline-in-force': 'info',
@@ -96,6 +97,7 @@ export const RULE_IDS = Object.freeze(Object.keys(RULE_SEVERITY).sort(byCodeUnit
  */
 export const EVIDENCE_MISSING_RULES = Object.freeze([
   'cause-undetermined',
+  'finding-limit-exceeded',
   'lineage-cycle',
   'lineage-depth-exceeded',
   'no-tables-checked',
@@ -121,6 +123,27 @@ const EVIDENCE_MISSING_SET = new Set(EVIDENCE_MISSING_RULES)
 
 export const EVIDENCE_LIMIT = 200
 export const MAX_ID_LENGTH = 128
+
+/**
+ * How many findings one audit will emit.
+ *
+ * `upstream-unknown` is raised once per unreadable lineage edge, and the
+ * declared limits allow a great many: 1280 governed tables each naming 256
+ * absent upstreams fits inside the 16 MiB snapshot ceiling and produced 327,680
+ * findings, a 134 MB report and a 1.25 GB peak RSS -- and, before the assembly
+ * stopped spreading, "Maximum call stack size exceeded" with an empty stdout.
+ * The bound is on the WORK, not only on the input.
+ *
+ * 50000 rather than something tidier: the ceiling shape that maximises the
+ * lineage WALK emits 20417 findings and must not be cut, while the shape that
+ * maximises the OUTPUT is cut here at a 20 MB report and a 460 MB peak.
+ *
+ * Reaching it is never a silent truncation. The audit stops emitting and adds
+ * `finding-limit-exceeded`, which is an evidence-missing rule, so the run is
+ * `incomplete` and exits 2 -- the findings shown are not the whole story and
+ * the report says so.
+ */
+export const MAX_FINDINGS = 50000
 
 /**
  * The severity table as a Map, because a property lookup is not a table lookup.

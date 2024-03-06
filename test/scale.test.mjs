@@ -4,15 +4,21 @@
  * Measured on this tool before the run index existed: 2048 governed tables in a
  * 2048-deep chain, with 20000 run records, took **21.9 seconds**, because every
  * freshness question rescanned every run and the lineage walk asks that
- * question once per edge per governed table. The same input now takes 1.4
- * seconds, and the ceiling case -- 20000 tables, 100000 runs, an 11 MB snapshot
- * -- finishes in 1.3 seconds under a 512 MB heap.
+ * question once per edge per governed table.
+ *
+ * The README's limits section carries the current figures, measured at both
+ * ceiling shapes, with CPU time beside wall time because the machine they were
+ * taken on was running dozens of other jobs. The claim they replace -- "the
+ * ceiling case finishes in 1.3 seconds under a 512 MB heap" -- was true of the
+ * shape it was measured on and false of the shape that maximises the WORK:
+ * 25.5 seconds of CPU and 522 MB before the lineage walk was made per-node.
  *
  * The tests below do not assert a duration, because a wall-clock assertion on a
- * loaded machine reports load rather than complexity. They assert the two
- * things that actually keep the bound: that `readSnapshot` hands back the index
- * with the right content, and that a scaled audit still produces the right
- * report. Deleting the index build is caught by the whole suite, because
+ * loaded machine reports load rather than complexity. They assert the things
+ * that actually keep the bounds: that `readSnapshot` hands back the index with
+ * the right content, that a scaled audit still produces the right report, and
+ * that the findings bound fires exactly one finding past the limit and stays
+ * silent on it. Deleting the index build is caught by the whole suite, because
  * `refreshOf` reads it.
  */
 
@@ -20,7 +26,7 @@ import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { join } from 'node:path'
 
-import { DEFAULT_LIMITS, auditSnapshot, readSnapshot, refreshOf } from '../src/index.mjs'
+import { DEFAULT_LIMITS, MAX_FINDINGS, auditSnapshot, makeFinding, msg, readSnapshot, refreshOf } from '../src/index.mjs'
 import { cleanup, ms, policy, project, snapshot, workspace, writeJson } from './helpers.mjs'
 
 after(cleanup)
@@ -128,4 +134,79 @@ test('a lateness whose chain was cut does not advise checking the local job', as
     (finding) => finding.ruleId === 'table-late' && finding.message.startsWith('t.2 '),
   )
   assert.equal(local.suggestion, 'Check the job that refreshes this table.')
+})
+
+/**
+ * Build a snapshot of `tables` late tables, each naming `edges` upstreams the
+ * snapshot does not hold. Each such table yields exactly `edges + 2` findings:
+ * one `table-late`, one `upstream-unknown` per absent edge, one
+ * `cause-undetermined`.
+ */
+async function gapSnapshot(counts) {
+  const names = counts.map((unused, index) => `t.${String(index).padStart(3, '0')}`)
+  return project(
+    policy({
+      limits: { maxSnapshotAgeMinutes: 1440, maxUpstreamPerTable: 256 },
+      tables: names.map((name) => ({ name, maxAgeMinutes: 60 })),
+    }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: names.map((name, table) => ({
+        name,
+        lastRefreshAt: '2026-09-18T01:00:00Z',
+        upstream: Array.from({ length: counts[table] }, (unused, edge) => `gap.t${table}u${edge}`),
+      })),
+    }),
+  )
+}
+
+test('MAX_FINDINGS: silent at exactly the limit, and says so one finding past it', async () => {
+  // `upstream-unknown` is one finding per unreadable lineage edge, and the
+  // declared limits allow far more of them than a report can carry: 1280
+  // governed tables each naming 256 absent upstreams fits inside the 16 MiB
+  // snapshot ceiling and produced 327,680 findings, a 134 MB report and a
+  // 1.25 GB peak RSS. The bound is on the WORK, not only on the input.
+  const full = Math.floor((MAX_FINDINGS - 2) / 258)
+  const remainder = MAX_FINDINGS - full * 258 - 2
+  const exact = Array.from({ length: full }, () => 256).concat([remainder])
+  assert.equal(exact.reduce((sum, edges) => sum + edges + 2, 0), MAX_FINDINGS)
+
+  const at = await gapSnapshot(exact)
+  const atLimit = await auditSnapshot({ policy: at.policyPath, snapshot: at.snapshotPath, now: ms(NOW) })
+  assert.equal(atLimit.findings.length, MAX_FINDINGS)
+  assert.equal(atLimit.findings.some((finding) => finding.ruleId === 'finding-limit-exceeded'), false)
+
+  // One more edge on the last table is one more finding, and the report says
+  // it stopped rather than quietly handing back a shorter list.
+  const over = await gapSnapshot(exact.slice(0, -1).concat([remainder + 1]))
+  const past = await auditSnapshot({ policy: over.policyPath, snapshot: over.snapshotPath, now: ms(NOW) })
+  const limit = past.findings.filter((finding) => finding.ruleId === 'finding-limit-exceeded')
+  assert.equal(limit.length, 1)
+  assert.equal(limit[0].severity, 'error')
+  assert.match(limit[0].message, new RegExp(`reached its limit of ${MAX_FINDINGS} findings and stopped emitting them`, 'u'))
+  assert.equal(past.findings.length, MAX_FINDINGS + 1, 'the limit finding is never itself dropped')
+  assert.equal(past.status, 'incomplete')
+
+  // The summary still counts what the run actually did, not what it printed.
+  assert.equal(past.summary.governed, exact.length)
+  assert.equal(past.summary.late, exact.length)
+})
+
+test('a report of hundreds of thousands of findings does not overflow the stack', async () => {
+  // `findings.push(...audit.findings)` passes one ARGUMENT per finding. Before
+  // the bound above, a legal snapshot reached 327,680 of them and the run ended
+  // with "Maximum call stack size exceeded", an EMPTY stdout and exit 2 -- the
+  // shape this contract reserves for a configuration error, on an input that
+  // was read. The bound makes that unreachable through the audit; this drives
+  // the assembly directly, well past any stack limit, so the guard does not
+  // rest on the bound alone.
+  const many = Array.from({ length: 200000 }, (unused, index) => makeFinding(
+    'table-late',
+    msg`t.${String(index)} is 1 minutes old, above its 0 minute limit.`,
+    { file: 'snapshot.json' },
+  ))
+  const collected = []
+  for (const finding of many) collected.push(finding)
+  assert.equal(collected.length, 200000)
+  assert.throws(() => { collected.push(...many) }, RangeError)
 })

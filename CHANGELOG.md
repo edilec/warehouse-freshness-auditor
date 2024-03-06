@@ -24,6 +24,13 @@ breaking change and is recorded here.
 - `cause-undetermined`: a table can be provably late while why it is late stays
   unsettled. The lateness is reported as established and the gap beside it,
   rather than the lateness being attributed to the table by default.
+- `finding-limit-exceeded`: an audit emits at most 50000 findings. One
+  unreadable lineage edge is one `upstream-unknown`, and the declared limits
+  allow far more of them than a report can carry -- 1280 governed tables each
+  naming 256 absent upstreams fits inside the 16 MiB snapshot ceiling and
+  produced 327,680 findings, a 134 MB report and a 1.25 GB peak RSS. Reaching
+  the bound is never a silent truncation: the audit stops emitting and says so,
+  and the run is `incomplete` and exits `2`.
 - Suspension by policy, for tables that opt in: non-business days from a
   declared working week, and half-open maintenance windows. A run where every
   deadline was suspended also emits `no-deadline-in-force`, so a pass cannot be

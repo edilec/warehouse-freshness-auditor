@@ -67,6 +67,7 @@ export {
 export { DAY_MS, DAY_NAMES, MINUTE_MS, dayNameAt, minutesBetween, parseInstant, withinWindow } from './time.mjs'
 export {
   EVIDENCE_LIMIT,
+  MAX_FINDINGS,
   EVIDENCE_MISSING_RULES,
   FORBIDDEN_CLAIMS,
   LINE_SEPARATORS,
@@ -157,8 +158,18 @@ export async function auditSnapshot({ policy: policyPath, snapshot: snapshotPath
   let audit = { findings: [], checked: 0, suspended: 0, late: 0, unknown: 0 }
   let usable = false
 
+  // `findings.push(...other)` passes one ARGUMENT per finding, and a legal
+  // snapshot can produce hundreds of thousands: 1280 governed tables each
+  // naming 256 absent upstreams -- inside every declared bound -- overflowed
+  // the call stack, and the run ended with an empty stdout, exit 2 and
+  // "Maximum call stack size exceeded", which is the shape this contract
+  // reserves for a configuration error. A loop passes one argument.
+  const collect = (from) => {
+    for (const finding of from) findings.push(finding)
+  }
+
   if (!read.ok) {
-    findings.push(...read.findings)
+    collect(read.findings)
   } else if (now < read.generatedAtMs) {
     // Every age would be negative. Reporting one as an age, or clamping it to
     // zero and calling the table fresh, would both be this tool inventing a
@@ -186,7 +197,7 @@ export async function auditSnapshot({ policy: policyPath, snapshot: snapshotPath
   } else {
     usable = true
     audit = auditFreshness({ policy, snapshot: read, nowMs: now })
-    findings.push(...audit.findings)
+    collect(audit.findings)
   }
 
   // A pass over nothing is the vacuous green this catalog keeps finding, and a

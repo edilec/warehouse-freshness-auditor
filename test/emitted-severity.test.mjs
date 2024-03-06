@@ -18,7 +18,7 @@ import { after, test } from 'node:test'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { RULE_IDS, auditSnapshot } from '../src/index.mjs'
+import { MAX_FINDINGS, RULE_IDS, auditSnapshot } from '../src/index.mjs'
 import { BUSINESS_DAYS, cleanup, ms, policy, snapshot, workspace, writeJson } from './helpers.mjs'
 
 after(cleanup)
@@ -228,6 +228,28 @@ const SCENARIOS = [
       document: policy({
         limits: { maxSnapshotAgeMinutes: 1440, maxRuns: 1 },
         tables: [{ name: 'a.table', maxAgeMinutes: 60 }],
+      }),
+    }
+  }],
+  ['finding-limit-exceeded', async (root) => {
+    // Enough unreadable lineage edges to pass MAX_FINDINGS: each late table
+    // naming 256 upstreams the snapshot does not hold yields 258 findings, so
+    // this is one table more than the limit needs, well inside every declared
+    // limit. Derived from the constant so it keeps up with a change to it.
+    const tableCount = Math.ceil(MAX_FINDINGS / 258) + 1
+    const names = Array.from({ length: tableCount }, (unused, index) => `t.${String(index).padStart(4, '0')}`)
+    await writeJson(join(root, 'snapshot.json'), snapshot({
+      generatedAt: GENERATED,
+      tables: names.map((name, table) => ({
+        name,
+        lastRefreshAt: LATE,
+        upstream: Array.from({ length: 256 }, (unused, edge) => `gap.t${table}u${edge}`),
+      })),
+    }))
+    return {
+      document: policy({
+        limits: { maxSnapshotAgeMinutes: 1440, maxUpstreamPerTable: 256 },
+        tables: names.map((name) => ({ name, maxAgeMinutes: 60 })),
       }),
     }
   }],
