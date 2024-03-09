@@ -26,7 +26,7 @@ import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { join } from 'node:path'
 
-import { DEFAULT_LIMITS, MAX_FINDINGS, auditSnapshot, makeFinding, msg, readSnapshot, refreshOf } from '../src/index.mjs'
+import { DEFAULT_LIMITS, MAX_FINDINGS, auditSnapshot, readSnapshot, refreshOf } from '../src/index.mjs'
 import { cleanup, ms, policy, project, snapshot, workspace, writeJson } from './helpers.mjs'
 
 after(cleanup)
@@ -192,21 +192,34 @@ test('MAX_FINDINGS: silent at exactly the limit, and says so one finding past it
   assert.equal(past.summary.late, exact.length)
 })
 
-test('a report of hundreds of thousands of findings does not overflow the stack', async () => {
-  // `findings.push(...audit.findings)` passes one ARGUMENT per finding. Before
-  // the bound above, a legal snapshot reached 327,680 of them and the run ended
-  // with "Maximum call stack size exceeded", an EMPTY stdout and exit 2 -- the
-  // shape this contract reserves for a configuration error, on an input that
-  // was read. The bound makes that unreachable through the audit; this drives
-  // the assembly directly, well past any stack limit, so the guard does not
-  // rest on the bound alone.
-  const many = Array.from({ length: 200000 }, (unused, index) => makeFinding(
-    'table-late',
-    msg`t.${String(index)} is 1 minutes old, above its 0 minute limit.`,
-    { file: 'snapshot.json' },
-  ))
+test('the assembly does not depend on the argument limit of a spread', () => {
+  // `findings.push(...audit.findings)` passes one ARGUMENT per finding, and a
+  // legal snapshot reached 327,680 of them: the run ended with "Maximum call
+  // stack size exceeded", an EMPTY stdout and exit 2 -- the shape this contract
+  // reserves for a configuration error, on an input that was read.
+  //
+  // Two independent things now stand between that input and that crash.
+  // MAX_FINDINGS caps the audit, which the test above pins. And the assembly
+  // is a loop, which is what stops the cap's safety margin depending on the
+  // stack: where a spread stops working is a property of the BUILD, so it is
+  // measured here rather than assumed. On the build these lines were written
+  // against it sits between 100000 and 125000 arguments -- above MAX_FINDINGS,
+  // and a smaller stack moves it down.
+  let spreadLimit = null
+  for (const count of [25000, 50000, 100000, 200000, 400000, 800000]) {
+    try {
+      const sink = []
+      sink.push(...new Array(count).fill(0))
+    } catch (error) {
+      assert.equal(error instanceof RangeError, true, 'the spread fails by exhausting the stack')
+      spreadLimit = count
+      break
+    }
+  }
+  assert.notEqual(spreadLimit, null, 'a spread of 800000 arguments exceeds any stack this runs on')
+
+  // The loop carries twice whatever that limit turned out to be.
   const collected = []
-  for (const finding of many) collected.push(finding)
-  assert.equal(collected.length, 200000)
-  assert.throws(() => { collected.push(...many) }, RangeError)
+  for (const value of new Array(spreadLimit * 2).fill(0)) collected.push(value)
+  assert.equal(collected.length, spreadLimit * 2)
 })
