@@ -301,7 +301,9 @@ of them than a report can carry: 1280 governed tables each naming 256 absent
 upstreams fits inside the 16 MiB snapshot ceiling and produced 327,680 findings,
 a 134 MB report and a 1.25 GB peak RSS. Reaching the bound is never a silent
 truncation — the audit stops emitting and adds `finding-limit-exceeded`, so the
-run is `incomplete` and exits `2`.
+run is `incomplete` and exits `2`. That one finding is added whatever the count,
+because it is the finding the limit may not drop, so a report that reached the
+bound carries 50001.
 
 The snapshot's completed runs are indexed once when it is read, and each table
 in a lineage walk is classified and sorted once per run rather than once per

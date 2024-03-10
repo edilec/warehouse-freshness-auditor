@@ -24,7 +24,8 @@ breaking change and is recorded here.
 - `cause-undetermined`: a table can be provably late while why it is late stays
   unsettled. The lateness is reported as established and the gap beside it,
   rather than the lateness being attributed to the table by default.
-- `finding-limit-exceeded`: an audit emits at most 50000 findings. One
+- `finding-limit-exceeded`: an audit emits at most 50000 findings, plus this
+  one when it reached that bound. One
   unreadable lineage edge is one `upstream-unknown`, and the declared limits
   allow far more of them than a report can carry -- 1280 governed tables each
   naming 256 absent upstreams fits inside the 16 MiB snapshot ceiling and
