@@ -67,10 +67,10 @@ export {
 export { DAY_MS, DAY_NAMES, MINUTE_MS, dayNameAt, minutesBetween, parseInstant, withinWindow } from './time.mjs'
 export {
   EVIDENCE_LIMIT,
-  MAX_FINDINGS,
   EVIDENCE_MISSING_RULES,
   FORBIDDEN_CLAIMS,
   LINE_SEPARATORS,
+  MAX_FINDINGS,
   MAX_ID_LENGTH,
   RULE_IDS,
   RULE_SEVERITY,
