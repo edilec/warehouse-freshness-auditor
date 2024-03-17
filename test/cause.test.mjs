@@ -93,6 +93,55 @@ test('an upstream refreshed exactly at --now is fresh, not an unreadable instant
   )
 })
 
+test('an upstream the snapshot disagrees with itself about is unknown, never late', async () => {
+  // Found by a mutation sweep: deleting the `conflict` arm of the cause
+  // classification left the whole suite green, and made the report say
+  //
+  //   "its upstream chain mart.daily <- raw.orders is late at its far end:
+  //    raw.orders is NaN minutes old, above its 60 minute limit"
+  //
+  // about a table whose last refresh this run could not read at all. The other
+  // three unknown arms were each driven by a test; this one was not.
+  const conflicted = await audit(
+    governs({ name: 'raw.orders', maxAgeMinutes: 60 }, { name: 'mart.daily', maxAgeMinutes: 120 }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: [
+        { name: 'raw.orders', lastRefreshAt: '2026-09-18T08:30:00Z' },
+        { name: 'mart.daily', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['raw.orders'] },
+      ],
+      runs: [{ table: 'raw.orders', runId: 'r-1', state: 'complete', endedAt: '2026-09-18T08:45:00Z' }],
+    }),
+  )
+  assert.deepEqual(
+    ruleIds(conflicted).sort(),
+    ['cause-undetermined', 'refresh-history-conflict', 'table-late'],
+  )
+  assert.match(
+    findingsFor(conflicted, 'cause-undetermined')[0].message,
+    /raw\.orders could not be judged \(the snapshot disagrees with itself about it\)/u,
+  )
+  // The lateness is still reported, and it is not attributed upstream.
+  assert.equal(ruleIds(conflicted).includes('table-late-upstream'), false)
+  assert.equal(JSON.stringify(conflicted).includes('NaN'), false)
+
+  // Non-vacuous: the same lineage without the contradiction DOES attribute the
+  // cause upstream, so this test is not satisfied by a tool that never does.
+  const settled = await audit(
+    governs({ name: 'raw.orders', maxAgeMinutes: 60 }, { name: 'mart.daily', maxAgeMinutes: 120 }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: [
+        { name: 'raw.orders', lastRefreshAt: '2026-09-18T01:00:00Z' },
+        { name: 'mart.daily', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['raw.orders'] },
+      ],
+      runs: [{ table: 'raw.orders', runId: 'r-1', state: 'complete', endedAt: '2026-09-18T01:00:00Z' }],
+    }),
+  )
+  assert.equal(ruleIds(settled).includes('table-late-upstream'), true)
+  assert.equal(ruleIds(settled).includes('cause-undetermined'), false)
+})
+
 test('a governed upstream the snapshot does not hold leaves the cause unsettled', async () => {
   // Distinct from an UNGOVERNED upstream: the policy does declare a deadline
   // for this one, and the snapshot simply has no row to apply it to.
