@@ -39,8 +39,8 @@ async function auditWith(policyPath, snapshotPath, now = NOW) {
   return auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now: ms(now) })
 }
 
-const auditDocument = async (snapshotDocument) => {
-  const { policyPath, snapshotPath } = await project(POLICY, snapshotDocument)
+const auditDocument = async (snapshotDocument, policyDocument = POLICY) => {
+  const { policyPath, snapshotPath } = await project(policyDocument, snapshotDocument)
   return auditWith(policyPath, snapshotPath)
 }
 
@@ -310,6 +310,32 @@ test('a startedAt this tool does read leaves the run alone, and so does its abse
     assert.deepEqual(report.findings, [], JSON.stringify(extra))
     assert.equal(report.status, 'pass', JSON.stringify(extra))
   }
+})
+
+test('one unreadable edge is one finding however many chains pass through it', async () => {
+  // Found by a mutation sweep: deleting the dedupe raised `upstream-unknown`
+  // three times for the single edge shared.mid -> z.absent, once for each
+  // governed table whose lineage walk passes through shared.mid. The existing
+  // dedupe test names the same upstream twice in ONE row, which the dedupe
+  // catches at a different point, so nothing covered this one.
+  const report = await auditDocument(snapshot({
+    generatedAt: '2026-09-18T09:00:00Z',
+    tables: [
+      { name: 'gov.a', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['shared.mid'] },
+      { name: 'gov.b', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['shared.mid'] },
+      { name: 'shared.mid', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['z.absent'] },
+    ],
+  }), policy({
+    limits: { maxSnapshotAgeMinutes: 1440 },
+    tables: ['gov.a', 'gov.b', 'shared.mid'].map((name) => ({ name, maxAgeMinutes: 60 })),
+  }))
+
+  const unknown = findingsFor(report, 'upstream-unknown')
+  assert.equal(unknown.length, 1)
+  assert.match(unknown[0].message, /^shared\.mid names z\.absent as an upstream/u)
+  // All three chains still say the cause is unsettled: the edge is reported
+  // once, not judged once.
+  assert.equal(findingsFor(report, 'cause-undetermined').length, 3)
 })
 
 test('an upstream named twice in one row is one edge, not two findings', async () => {

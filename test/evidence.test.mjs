@@ -189,6 +189,55 @@ test('a snapshot table the policy does not govern is simply not governed', async
   assert.equal(report.summary.governed, 1)
 })
 
+test('a cycle the walk enters but is not part of is still a cycle, and the chain shows it', async () => {
+  // Two mutations survived the suite on the two-table cycle above, and both
+  // change what an operator reads.
+  //
+  // The two-table case a <- b <- a returns to the STARTING table, which is in
+  // `onPath` from the first line of the walk, so deleting `onPath.add` still
+  // detected it. Here a.head walks into a cycle it is not part of --
+  // a.head <- b.mid <- c.tail <- b.mid -- and without that line the walk runs
+  // to the depth bound instead, reporting `lineage-depth-exceeded` about a
+  // lineage that does not merely go deep, it goes round.
+  //
+  // And deleting the `chain.push` in the cycle arm left the message saying
+  // "the upstream chain a.head <- b.mid <- c.tail returns to a table it
+  // already passed through" -- a sentence whose own evidence shows no repeat.
+  const { policyPath, snapshotPath } = await project(
+    policy({
+      limits: { maxSnapshotAgeMinutes: 1440 },
+      tables: ['a.head', 'b.mid', 'c.tail'].map((name) => ({ name, maxAgeMinutes: 60 })),
+    }),
+    snapshot({
+      generatedAt: '2026-09-18T09:00:00Z',
+      tables: [
+        { name: 'a.head', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['b.mid'] },
+        { name: 'b.mid', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['c.tail'] },
+        { name: 'c.tail', lastRefreshAt: '2026-09-18T01:00:00Z', upstream: ['b.mid'] },
+      ],
+    }),
+  )
+  const report = await auditSnapshot({ policy: policyPath, snapshot: snapshotPath, now: ms(NOW) })
+
+  assert.equal(report.status, 'incomplete')
+  assert.equal(findingsFor(report, 'lineage-cycle').length, 3, 'every governed table in or above the cycle')
+  assert.equal(ruleIds(report).includes('lineage-depth-exceeded'), false, 'round, not merely deep')
+
+  const chains = findingsFor(report, 'lineage-cycle').map((finding) => finding.message)
+  const head = chains.find((message) => message.startsWith('the upstream chain a.head'))
+  assert.match(head, /^the upstream chain a\.head <- b\.mid <- c\.tail <- b\.mid returns to a table it already passed through/u)
+
+  // The repeated name is what makes the sentence checkable, so it is asserted
+  // rather than left to the phrase around it.
+  for (const message of chains) {
+    const chain = message.slice('the upstream chain '.length).split(' returns to')[0].split(' <- ')
+    assert.equal(new Set(chain).size, chain.length - 1, `one name repeats: ${chain.join(' <- ')}`)
+    // And the repeat is the LAST name, closing the loop, rather than some
+    // earlier coincidence: its first occurrence is somewhere before the end.
+    assert.equal(chain.indexOf(chain.at(-1)) < chain.length - 1, true, chain.join(' <- '))
+  }
+})
+
 test('a lineage cycle leaves the far end of the chain unnamed', async () => {
   const { policyPath, snapshotPath } = await project(
     policy({

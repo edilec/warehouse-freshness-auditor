@@ -168,6 +168,37 @@ test('the human summary says plainly that incomplete is not a pass', async () =>
   )
 })
 
+test('the human summary carries every finding, not only the counts', async () => {
+  // Two mutations survived here: deleting either of the two lines the summary
+  // writes per finding left the totals intact and the suite green, so a reader
+  // of stderr alone would have seen "findings 1" and nothing about what it was.
+  // The summary is the output a person reads; the JSON is the one a parser
+  // reads, and only the second was pinned.
+  const result = await run(args(await project(POLICY, stale())))
+  assert.equal(result.code, 1)
+  const report = JSON.parse(result.stdout)
+  assert.equal(report.findings.length > 0, true)
+
+  for (const finding of report.findings) {
+    const where = [finding.location.file, finding.location.pointer].filter(Boolean).join(' ')
+    assert.equal(
+      result.stderr.includes(`  ${finding.severity} ${finding.ruleId} ${where}\n`),
+      true,
+      `the summary names ${finding.ruleId} and where it is`,
+    )
+    assert.equal(
+      result.stderr.includes(`    ${finding.message}\n`),
+      true,
+      `the summary carries the message of ${finding.ruleId}`,
+    )
+  }
+
+  // And the counts, so a summary that printed findings and dropped the totals
+  // would fail here too.
+  assert.match(result.stderr, /^warehouse-freshness-auditor: fail$/mu)
+  assert.match(result.stderr, new RegExp(`^ {2}findings ${report.findings.length} `, 'mu'))
+})
+
 test('stdout is only ever the report, so it pipes into a parser', async () => {
   const result = await run(args(await project(POLICY, stale())))
   assert.doesNotThrow(() => JSON.parse(result.stdout))
