@@ -89,6 +89,20 @@ test('a year under 100 is the year the document wrote, and never the 1900s', () 
   assert.equal(disagreements, 0)
 })
 
+test('a value that is not a string is unreadable, including one that will not convert', () => {
+  // Found by a mutation sweep: deleting the `typeof text !== 'string'` line
+  // left the suite green. A regular expression coerces its subject, so a
+  // number, a boolean and null all still came back unreadable -- but
+  // `{"lastRefreshAt": {"toString": {}}}` is JSON a snapshot may legally
+  // contain, and `String()` of that object THROWS. Without the line the run
+  // died with "Cannot convert object to primitive value", an empty stdout and
+  // exit 2: the shape reserved for a configuration error, on a document that
+  // had been read and should have been reported as `snapshot-invalid`.
+  for (const value of [99999, null, undefined, true, ['2026-09-18'], { toString: {} }, Symbol('x')]) {
+    assert.deepEqual(parseInstant(value), { ok: false }, String(typeof value))
+  }
+})
+
 test('the day names run from the weekday the epoch fell on', () => {
   assert.equal(DAY_NAMES.length, 7)
   assert.equal(dayNameAt(0, 0), 'thursday', '1970-01-01 was a Thursday')

@@ -99,13 +99,44 @@ test('an unknown option keeps stdout empty and exits 2', async () => {
   assert.match(result.stderr, /Unknown option "--invented"/u)
 })
 
-test('a missing required option keeps stdout empty and exits 2', async () => {
-  for (const argv of [[], ['--policy', 'x'], ['--snapshot', 'y']]) {
+test('a missing required option keeps stdout empty and exits 2, and says which one', async () => {
+  // /is required/ alone was satisfied by a run that had lost the guard
+  // entirely: deleting `--policy is required` left Node itself saying
+  // `The "paths[0]" argument must be of type string. Received null`, and the
+  // loop still passed because one of the three cases still produced a message
+  // containing those words. Each case now pins its own sentence.
+  const cases = [
+    [[], /^--policy is required$/mu],
+    [['--policy', 'x'], /^--snapshot is required$/mu],
+    [['--snapshot', 'y'], /^--policy is required$/mu],
+    [['--policy', 'x', '--snapshot', 'y'], /^--now is required: this tool never reads a clock of its own$/mu],
+  ]
+  for (const [argv, message] of cases) {
     const result = await run(argv)
-    assert.equal(result.code, 2)
-    assert.equal(result.stdout, '')
-    assert.match(result.stderr, /is required/u)
+    assert.equal(result.code, 2, argv.join(' '))
+    assert.equal(result.stdout, '', argv.join(' '))
+    assert.match(result.stderr, message)
+    // A configuration error prints the usage, so the caller can see what was
+    // wanted; an internal type error from deeper in the program would not.
+    assert.match(result.stderr, /Usage:/u, argv.join(' '))
+    assert.equal(result.stderr.includes('argument must be of type'), false, argv.join(' '))
   }
+})
+
+test('an option whose value is missing is refused before the next option is eaten', async () => {
+  // `--policy --snapshot s.json` must not take "--snapshot" as the policy path,
+  // and must not silently consume the flag either. Without that guard the
+  // parser took `--snapshot` as the value and then reported
+  // `Unknown option "s.json"` -- a message about the wrong argument entirely.
+  const result = await run(['--policy', '--snapshot', 's.json', '--now', '2026-09-18'])
+  assert.equal(result.code, 2)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /^--policy requires a value$/mu)
+  assert.equal(result.stderr.includes('Unknown option'), false)
+
+  const trailing = await run(['--policy', 'p.json', '--snapshot'])
+  assert.equal(trailing.code, 2)
+  assert.match(trailing.stderr, /^--snapshot requires a value$/mu)
 })
 
 test('an invalid policy keeps stdout empty and exits 2', async () => {

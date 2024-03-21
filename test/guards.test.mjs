@@ -268,6 +268,57 @@ test('a run endedAt this tool does not read is refused rather than guessed at', 
   })
 })
 
+test('an instant that will not convert to a primitive is a finding, never a crash', async () => {
+  // `{"toString": {}}` is JSON, and `String()` of it throws. Every place this
+  // tool reads an instant out of a document has to survive that: a snapshot
+  // that was READ and could not be understood owes the caller an `incomplete`
+  // report naming the field, not an empty stdout with a language error on
+  // stderr.
+  const unconvertible = { toString: {} }
+  const documents = [
+    ['a table lastRefreshAt', {
+      schemaVersion: '1',
+      generatedAt: NOW,
+      tables: [{ name: 'a.table', lastRefreshAt: unconvertible }],
+    }],
+    ['generatedAt', { schemaVersion: '1', generatedAt: unconvertible, tables: [] }],
+    ['a run endedAt', {
+      schemaVersion: '1',
+      generatedAt: NOW,
+      tables: [],
+      runs: [{ table: 'a.table', runId: 'r-1', state: 'failed', endedAt: unconvertible }],
+    }],
+    ['a run startedAt', {
+      schemaVersion: '1',
+      generatedAt: NOW,
+      tables: [],
+      runs: [{ table: 'a.table', runId: 'r-1', state: 'failed', startedAt: unconvertible }],
+    }],
+  ]
+  for (const [what, document] of documents) {
+    const report = await auditDocument(document)
+    assert.equal(report.status, 'incomplete', what)
+    assert.deepEqual(ruleIds(report), ['snapshot-invalid'], what)
+  }
+
+  // The policy side is a CONFIGURATION error, which is the other shape: it
+  // throws rather than reporting, and the message describes the value by its
+  // shape rather than reproducing it.
+  assert.throws(
+    () => validatePolicy({
+      schemaVersion: '1',
+      calendar: { maintenanceWindows: [{ id: 'w', start: unconvertible, end: NOW }] },
+      tables: [{ name: 'a.table', maxAgeMinutes: 60, suspendDuringMaintenance: true }],
+    }),
+    (error) => {
+      assert.equal(error instanceof PolicyError, true)
+      assert.match(error.message, /must be an instant written as YYYY-MM-DD/u)
+      assert.match(error.message, /This document says "\[object\]"/u)
+      return true
+    },
+  )
+})
+
 test('a run startedAt this tool does not read is refused rather than accepted in silence', async () => {
   // `startedAt` is in the accepted key set, so a snapshot carrying it is not
   // stopped as an unknown key -- and nothing read or checked it either, so a
