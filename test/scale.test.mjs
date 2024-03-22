@@ -11,7 +11,8 @@
  * taken on was running dozens of other jobs. The claim they replace -- "the
  * ceiling case finishes in 1.3 seconds under a 512 MB heap" -- was true of the
  * shape it was measured on and false of the shape that maximises the WORK:
- * 25.5 seconds of CPU and 522 MB before the lineage walk was made per-node.
+ * 21.4 seconds of CPU and 519 MB before the lineage walk was made once-per-node,
+ * for a report byte-identical to the 3.6 seconds and 362 MB it takes now.
  *
  * The tests below do not assert a duration, because a wall-clock assertion on a
  * loaded machine reports load rather than complexity. They assert the things

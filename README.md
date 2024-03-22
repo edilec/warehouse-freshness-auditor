@@ -310,18 +310,23 @@ in a lineage walk is classified and sorted once per run rather than once per
 descendant, so a freshness question costs the same whatever the run history
 holds and a shared chain is not re-walked for every table that hangs off it.
 
-Measured on this tool, on a 16-core machine under heavy concurrent load — so
-wall time is reported beside the CPU time that does not depend on that load:
+Measured on this tool, on a 16-core machine whose load average moved between
+about 50 and 400 while these were taken. Wall time therefore measures the
+machine as much as the tool, and is given for context only; the CPU column is
+the one to compare.
 
-| Input | CPU (user) | Wall | Peak RSS |
-| --- | ---: | ---: | ---: |
-| ceiling, work-shaped: 20000 tables, 100000 runs, 10.9 MB, 2048 governed, 64-deep chain, 256 upstream per node | 4.4 s | 37.6 s | 363 MB |
-| the same before the per-table walk was made per-node | 25.5 s | 149.5 s | 522 MB |
-| ceiling, output-shaped: 1280 governed tables each naming 256 absent upstreams, 16.0 MB — the findings bound fires | 2.0 s | 14.7 s | 460 MB |
+| Input | CPU (user) | Wall | Peak RSS | Findings |
+| --- | ---: | ---: | ---: | ---: |
+| ceiling, work-shaped: 20000 tables, 100000 runs, 10.9 MB, 2048 governed, a 64-edge chain, 256 upstream per node | 3.6 s | 4.4 s | 362 MB | 20417 |
+| the same, before the lineage walk was made once-per-node | 21.4 s | 141.7 s | 519 MB | 20417 |
+| ceiling, output-shaped: 1280 governed tables each naming 256 absent upstreams, 16.0 MB — the findings bound fires | 1.8 s | 4.6 s | 459 MB | 50001 |
 
-The second row is kept because it is the measurement that found the defect. The
-wall figures are what the machine did while running dozens of other jobs; the
-CPU column is the one to compare.
+The second row is kept because it is the measurement that found the defect, and
+its report is **byte-identical** to the first: walking each lineage node once
+changed how long the run takes and nothing about what it says.
+
+Before either change, the third input did not finish at all. It ended with
+`Maximum call stack size exceeded`, an empty stdout and exit `2`.
 
 ## Verification
 
