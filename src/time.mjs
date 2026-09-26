@@ -1,0 +1,118 @@
+/**
+ * Instants, days and windows.
+ *
+ * Nothing in this file reads a clock. There is no `Date.now()`, no `new Date()`
+ * with no argument and no `Date.parse` anywhere in this tool: the present is a
+ * value the caller supplies with `--now`, and every age in a report is
+ * arithmetic between that value and a timestamp in the snapshot. That is what
+ * makes two runs over the same documents produce byte-identical output, and it
+ * is the difference between a freshness auditor you can put in a test and one
+ * whose answers depend on when it happened to run.
+ *
+ * `Date.parse` is refused for a second reason. It accepts implementation
+ * defined formats, treats a bare `YYYY-MM-DD` as UTC but `YYYY-MM-DDTHH:MM:SS`
+ * as local time, and silently rolls `2026-02-30` forward into March. Every
+ * instant here is parsed by the two strict shapes below and range checked.
+ */
+
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/u
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/u
+
+export const MINUTE_MS = 60000
+export const DAY_MS = 86400000
+
+function daysInMonth(year, month) {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+    return leap ? 29 : 28
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+}
+
+/**
+ * Whole days from 1970-01-01 to a proleptic Gregorian civil date.
+ *
+ * `Date.UTC` is NOT used, and the reason is the same class of silent roll this
+ * tool refuses `Date.parse` for: `Date.UTC` applies the legacy two-digit-year
+ * rule of the language specification (ECMA-262, MakeFullYear), so a year in
+ * 0000-0099 is remapped into 1900-1999. `Date.UTC(26, 8, 18)` is 1926, not 26.
+ * A zero or sentinel timestamp is an ordinary artefact of a warehouse export,
+ * and reading `0026-09-18T08:30:00Z` as 1926 made this tool state a specific
+ * fifty-two-million-minute age as a fact about an instant no document contains.
+ *
+ * This is Hinnant's days_from_civil: exact integer arithmetic over the 400-year
+ * Gregorian cycle, with March as the first month of the internal year so the
+ * leap day lands at its end. It agrees with `Date.UTC` for every year this tool
+ * can parse from 0100 onwards, which the test suite asserts over the whole
+ * range rather than at a few points.
+ */
+function daysFromCivil(year, month, day) {
+  const shifted = month <= 2 ? year - 1 : year
+  const era = Math.floor(shifted / 400)
+  const yearOfEra = shifted - era * 400
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear
+  return era * 146097 + dayOfEra - 719468
+}
+
+/**
+ * Parse one of the two accepted shapes.
+ *
+ * A sweep reports swapping these two alternatives as SURVIVING, and that is an
+ * EQUIVALENT MUTANT for a reason a reader can check: both patterns are anchored
+ * at both ends, and the date-only shape has no `T`, so no string can match
+ * both. Whichever is tried first, at most one can succeed.
+ */
+export function parseInstant(text) {
+  if (typeof text !== 'string') return { ok: false }
+  const match = DATE_TIME.exec(text) ?? DATE_ONLY.exec(text)
+  if (match === null) return { ok: false }
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const [hour, minute, second] = [Number(match[4] ?? 0), Number(match[5] ?? 0), Number(match[6] ?? 0)]
+  const milli = match[7] === undefined ? 0 : Number(match[7].padEnd(3, '0'))
+  if (month < 1 || month > 12) return { ok: false }
+  if (day < 1 || day > daysInMonth(year, month)) return { ok: false }
+  // 24:00:00 and a leap second are both refused: neither is a point this tool
+  // can order against another without inventing what the exporter meant.
+  if (hour > 23 || minute > 59 || second > 59) return { ok: false }
+  const ms = daysFromCivil(year, month, day) * 86400000
+    + hour * 3600000 + minute * 60000 + second * 1000 + milli
+  return { ok: true, ms }
+}
+
+/**
+ * The seven day names, in the order the epoch produces them.
+ *
+ * 1970-01-01T00:00:00Z was a Thursday, so the day index derived from whole days
+ * since the epoch starts there. The list is written in that rotation rather
+ * than starting at Monday precisely so that no separate offset constant can
+ * drift away from it.
+ */
+export const DAY_NAMES = Object.freeze([
+  'thursday', 'friday', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday',
+])
+
+/** The weekday an instant falls on, once shifted into the policy's offset. */
+export function dayNameAt(ms, offsetMinutes) {
+  const shifted = ms + offsetMinutes * MINUTE_MS
+  // `Math.floor` rather than a truncating division, so an instant before the
+  // epoch lands on the day it belongs to instead of the one after it.
+  const days = Math.floor(shifted / DAY_MS)
+  return DAY_NAMES[((days % 7) + 7) % 7]
+}
+
+/**
+ * Whether an instant falls inside a window.
+ *
+ * Half open, `[start, end)`. A window that ended exactly at this instant is
+ * over: the closed form would leave two adjacent windows overlapping at their
+ * shared edge, and a table would be suspended for one millisecond it is not.
+ */
+export function withinWindow(ms, window) {
+  return ms >= window.startMs && ms < window.endMs
+}
+
+/** Whole minutes between two instants, rounded down, never negative here. */
+export function minutesBetween(fromMs, toMs) {
+  return Math.floor((toMs - fromMs) / MINUTE_MS)
+}
